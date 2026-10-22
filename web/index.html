@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AGIS – AspectoGIS</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.12.1/proj4.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/ol@10.2.1/dist/ol.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+  // ---- Konfigurasjon -------------------------------------------------------
+  // Fyll inn for produksjon. Tom = demo-modus (data kun i minnet).
+  window.ASPECTO_KART_CONFIG = {
+    supabaseUrl: "",
+    supabaseAnonKey: "",
+    staffDomain: "aspecto.no",
+    appName: "AGIS"
+  };
+</script>
+<style>
+/* Layout: toppstripe + venstre panel + kart. Palett hentet fra Aspecto-profilen (marineblå) med sjøgrønn aksent. */
+:root{
+  --navy:#224754; --navy-deep:#16313b; --sea:#1f8a8a; --sea-soft:#dff1f0;
+  --bg:#f6f8f8; --panel:#ffffff; --fg:#1b2a30; --muted:#5e7279; --line:#d9e1e3;
+  --ok:#2e8b57; --warn:#d99a1f; --bad:#c84b3a; --info:#3b7fc4;
+  --font:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --radius:6px; --shadow:0 2px 10px rgba(22,49,59,.14);
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0f1b20; --panel:#15262c; --fg:#e6eef0; --muted:#9db2b9; --line:#2b3f46; --sea-soft:#163a3a; color-scheme:dark; } }
+:root[data-theme="dark"]{ --bg:#0f1b20; --panel:#15262c; --fg:#e6eef0; --muted:#9db2b9; --line:#2b3f46; --sea-soft:#163a3a; color-scheme:dark; }
+
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 var(--font);overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+a{color:var(--sea)}
+[hidden]{display:none!important}
+
+.app{display:grid;grid-template-rows:52px 1fr;grid-template-columns:340px 1fr;height:100%}
+.app.embed{grid-template-rows:0 1fr;grid-template-columns:0 1fr}
+.app.embed .topbar,.app.embed .panel{display:none}
+
+/* Toppstripe */
+.topbar{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:0 max(14px,env(safe-area-inset-left,0px)) 0 max(14px,env(safe-area-inset-left,0px));background:var(--navy);color:#fff;border-bottom:1px solid var(--navy-deep)}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:#fff;white-space:nowrap}
+.brandlogo{height:30px;width:auto;display:block}
+.brandtag{font-weight:600;letter-spacing:.16em;font-size:12px;padding:2px 7px;border:1px solid rgba(255,255,255,.45);border-radius:4px;opacity:.95}
+.topbar .title{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+.topbar .title input{background:transparent;border:1px solid transparent;color:#fff;font-weight:500;font-size:15px;padding:4px 8px;border-radius:4px;width:100%;max-width:520px}
+.topbar .title input:focus{outline:none;border-color:rgba(255,255,255,.35);background:rgba(255,255,255,.06)}
+.topbar .title input:read-only{pointer-events:none}
+.userchip{display:flex;align-items:center;gap:8px;font-size:12px;opacity:.95;white-space:nowrap}
+.userchip .dot{width:8px;height:8px;border-radius:50%;background:#7bd389}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:var(--radius);padding:6px 10px;font-size:13px;font-weight:500;display:inline-flex;align-items:center;gap:6px;line-height:1.2}
+.btn:hover{border-color:var(--sea)}
+.btn.primary{background:var(--sea);border-color:var(--sea);color:#fff}
+.btn.ghost{background:transparent;border-color:rgba(255,255,255,.35);color:#fff}
+.btn.small{padding:3px 7px;font-size:12px}
+.btn.danger{color:var(--bad)}
+.btn:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--sea);outline-offset:1px}
+
+/* Panel */
+.panel{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.panel header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--line)}
+.panel h2{margin:0;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.panel .scroll{overflow:auto;flex:1;min-height:0;padding:10px 14px 16px}
+.tabs{display:flex;border-bottom:1px solid var(--line)}
+.tabs button{flex:1;background:none;border:0;padding:10px 6px;font-size:13px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent}
+.tabs button.active{color:var(--fg);border-bottom-color:var(--sea)}
+
+.mapcard{display:block;width:100%;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
+.mapcard:hover{border-color:var(--sea)}
+.mapcard b{display:block;font-weight:600}
+.mapcard small{color:var(--muted);display:block;margin-top:2px}
+.pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--sea-soft);color:var(--sea);font-weight:500;margin-left:6px}
+
+.layer{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}
+.layer .sw{width:14px;height:14px;border-radius:3px;border:1px solid rgba(0,0,0,.25)}
+.layer .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.layer .meta{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.layer .acts{display:flex;gap:2px}
+.iconbtn{border:0;background:transparent;width:26px;height:26px;border-radius:4px;display:inline-flex;align-items:center;justify-content:center;color:var(--muted)}
+.iconbtn:hover{background:var(--bg);color:var(--fg)}
+.iconbtn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.layer input[type=checkbox]{width:16px;height:16px;accent-color:var(--sea)}
+.legend{grid-column:2/-1;display:flex;flex-wrap:wrap;gap:6px 12px;font-size:11px;color:var(--muted);padding:2px 0 4px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+
+.section{margin-top:14px}
+.section h3{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 8px}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field label{font-size:12px;color:var(--muted)}
+.field input,.field select,.field textarea{border:1px solid var(--line);background:var(--bg);border-radius:4px;padding:7px 8px;width:100%}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.row > *{min-width:0}
+.hint{font-size:12px;color:var(--muted)}
+code,.mono{font-family:var(--mono);font-size:12px}
+pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:8px;overflow-x:auto;font-size:11px;white-space:pre-wrap;word-break:break-all}
+.comment{border-left:3px solid var(--info);padding:6px 10px;margin-bottom:8px;background:var(--bg);border-radius:0 4px 4px 0}
+.comment.resolved{border-left-color:var(--ok);opacity:.7}
+.comment .who{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.access{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.welcome{text-align:center;padding:18px 6px 10px}
+.welcome img{width:70%;max-width:220px;height:auto}
+.welcome h3{margin:14px 0 4px;font-size:15px;letter-spacing:.04em}
+.welcome p{margin:0 0 10px;color:var(--muted);font-size:12px}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .welcome img{filter:brightness(0) invert(1)} }
+:root[data-theme="dark"] .welcome img{filter:brightness(0) invert(1)}
+.notice{background:var(--sea-soft);color:var(--navy);border-radius:4px;padding:8px 10px;font-size:12px;margin-bottom:10px}
+:root[data-theme="dark"] .notice, .dark .notice{color:#cfe9e8}
+
+/* Kartområde */
+.mapwrap{position:relative;min-width:0;min-height:0}
+#map{position:absolute;inset:0}
+.toolbar{position:absolute;top:10px;left:10px;display:flex;flex-direction:column;gap:6px;z-index:5}
+.toolbar .grp{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden}
+.toolbar .grp button{width:36px;height:34px;border:0;background:transparent;display:flex;align-items:center;justify-content:center;color:var(--fg)}
+.toolbar .grp button + button{border-top:1px solid var(--line)}
+.toolbar .grp button:hover{background:var(--bg)}
+.toolbar .grp button.active{background:var(--sea);color:#fff}
+.toolbar svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.statusbar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;align-items:flex-end;padding:6px 10px;pointer-events:none;z-index:4;font-family:var(--mono);font-size:11px;color:var(--fg)}
+.statusbar > *{background:rgba(255,255,255,.82);padding:2px 6px;border-radius:3px;pointer-events:auto}
+:root[data-theme="dark"] .statusbar > *{background:rgba(21,38,44,.85)}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]) .statusbar > *{background:rgba(21,38,44,.85)} }
+.modehint{position:absolute;top:10px;left:56px;z-index:5;background:var(--navy);color:#fff;padding:6px 10px;border-radius:var(--radius);font-size:12px;box-shadow:var(--shadow);display:flex;gap:10px;align-items:center}
+.modehint button{background:#fff;color:var(--navy);border:0;border-radius:4px;padding:3px 8px;font-size:12px;font-weight:600}
+.embedbadge{position:absolute;left:10px;bottom:34px;z-index:5;background:var(--navy);color:#fff;border-radius:var(--radius);padding:6px 10px;font-size:12px;display:flex;gap:10px;align-items:center;box-shadow:var(--shadow)}
+.embedbadge a{color:#fff;font-weight:600}
+.panel-toggle{display:none;position:absolute;right:10px;bottom:34px;z-index:6}
+
+/* Dialog */
+.dialog{position:fixed;inset:0;background:rgba(22,49,59,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.dialog .box{background:var(--panel);color:var(--fg);border-radius:8px;padding:18px;width:min(420px,100%);box-shadow:var(--shadow)}
+.dialog h3{margin:0 0 12px;font-size:15px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;z-index:60;box-shadow:var(--shadow)}
+
+
+/* OpenLayers – nødvendig CSS (inlinet) */
+.ol-viewport{position:relative;overflow:hidden;width:100%;height:100%;touch-action:none}
+.ol-viewport canvas{display:block}
+.ol-layer{position:absolute;width:100%;height:100%}
+.ol-unselectable{-webkit-touch-callout:none;user-select:none;-webkit-tap-highlight-color:transparent}
+.ol-viewport, .ol-unselectable{-webkit-user-select:none}
+.ol-selectable{user-select:text}
+.ol-grabbing{cursor:grabbing}.ol-grab{cursor:grab}
+.mapwrap.mode-draw .ol-viewport{cursor:crosshair}
+.ol-control{position:absolute}
+.ol-scale-line{position:absolute;left:10px;bottom:30px;background:rgba(255,255,255,.82);padding:2px 6px;border-radius:3px}
+.ol-scale-line-inner{border:1px solid var(--fg);border-top:none;color:var(--fg);font-family:var(--mono);font-size:10px;text-align:center;margin:1px;will-change:contents,width;transition:all .25s}
+.ol-overlay-container{will-change:left,right,top,bottom}
+.ol-attribution{display:none}
+.popup{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:var(--panel);color:var(--fg);border-radius:6px;box-shadow:var(--shadow);padding:12px 14px;min-width:230px;max-width:330px;width:max-content}
+.popup::after{content:"";position:absolute;top:100%;left:50%;margin-left:-9px;border:9px solid transparent;border-top-color:var(--panel)}
+.popup h4{margin:0 20px 6px 0;font-size:14px}
+.popup table{border-collapse:collapse;width:100%;font-size:12px}
+.popup td{padding:2px 6px 2px 0;vertical-align:top;border-bottom:1px solid var(--line)}
+.popup td:first-child{color:var(--muted);white-space:nowrap}
+.popup textarea{width:100%;min-height:60px;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)}
+.popup .close{position:absolute;right:4px;top:2px;background:none;border:0;font-size:18px;color:var(--muted)}
+.crsbadge{font-weight:500}
+.crsbadge b{font-weight:600}
+.statusbar select{font:inherit;font-size:11px;border:0;background:transparent;color:var(--fg);padding:0}
+
+@media (max-width:760px){
+  .app{grid-template-columns:1fr}
+  .panel{position:absolute;left:0;right:0;bottom:0;top:52px;z-index:20;transform:translateY(100%);transition:transform .2s}
+  .panel.open{transform:none}
+  .panel-toggle{display:inline-flex}
+  .brandtag{display:none}
+  .topbar .title input{font-size:14px;min-width:120px;padding-left:0}
+  .userchip > span{display:none}
+  .toolbar{top:auto;bottom:72px}
+  .toolbar .grp{flex-direction:row}
+  .toolbar .grp button + button{border-top:0;border-left:1px solid var(--line)}
+  .modehint{left:10px;right:10px;top:52px}
+}
+@media (prefers-reduced-motion:reduce){ .panel{transition:none} }
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="topbar">
+    <a class="brand" href="?" id="brandLink" title="Alle kart">
+      <img src="logo-white.png" alt="Aspecto" class="brandlogo">
+      <span class="brandtag">AGIS</span>
+    </a>
+    <div class="title"><input id="mapTitle" placeholder="Velg et kart" readonly></div>
+    <div class="userchip" id="userchip"></div>
+  </div>
+
+  <aside class="panel" id="panel">
+    <div class="tabs" id="tabs" hidden>
+      <button data-tab="layers" class="active">Lag</button>
+      <button data-tab="comments">Kommentarer</button>
+      <button data-tab="share">Deling</button>
+    </div>
+    <header id="panelHeader"><h2 id="panelTitle">Kart</h2><div id="panelActions"></div></header>
+    <div class="scroll" id="panelBody"></div>
+  </aside>
+
+  <div class="mapwrap">
+    <div id="map"></div>
+    <div class="toolbar" id="toolbar">
+      <div class="grp">
+        <button id="zoomIn" title="Zoom inn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+        <button id="zoomOut" title="Zoom ut"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+        <button id="zoomFit" title="Zoom til data"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
+      <div class="grp" id="drawTools">
+        <button data-mode="point" title="Tegn punkt"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8" stroke-dasharray="2 3"/></svg></button>
+        <button data-mode="line" title="Tegn linje"><svg viewBox="0 0 24 24"><path d="M4 18L10 8l5 7 5-11"/><circle cx="4" cy="18" r="1.5"/><circle cx="20" cy="4" r="1.5"/></svg></button>
+        <button data-mode="polygon" title="Tegn polygon"><svg viewBox="0 0 24 24"><path d="M5 8l8-4 6 6-3 9-10-2z"/></svg></button>
+        <button data-mode="measure" title="Mål avstand"><svg viewBox="0 0 24 24"><path d="M3 17L17 3l4 4L7 21z"/><path d="M8 12l2 2M11 9l2 2M14 6l2 2"/></svg></button>
+        <button data-mode="comment" title="Legg til kommentar"><svg viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></svg></button>
+      </div>
+    </div>
+    <div class="modehint" id="modehint" hidden></div>
+    <div class="statusbar"><span id="coords">—</span><span class="crsbadge" id="crsbadge">—</span></div>
+    <div id="popup" class="popup" hidden></div>
+    <div class="embedbadge" id="embedbadge" hidden></div>
+    <button class="btn primary panel-toggle" id="panelToggle">Lag og info</button>
+  </div>
+</div>
+<div id="dialogHost"></div>
+
+<script>
+(function(){
+'use strict';
+const CFG = window.ASPECTO_KART_CONFIG || {};
+const qs = new URLSearchParams(location.search);
+const EMBED = qs.get('embed') === '1';
+const DEMO = qs.get('demo') === '1' || !CFG.supabaseUrl;
+const $ = (s, el=document) => el.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2) + Date.now());
+const fmtDate = d => new Date(d).toLocaleDateString('nb-NO', {day:'2-digit', month:'short', year:'numeric'});
+
+// ---- Katalog med faglag (WMS) ---------------------------------------------
+// Grunnlaget er alltid Kartverket topo (se TOPO_WMS). Disse kan legges oppå med ett klikk.
+const CATALOG = [
+  {name:'Sjøkart raster (Kartverket)', kind:'wms', source:{url:'https://wms.geonorge.no/skwms1/wms.sjokartraster', layers:'sjokartraster', version:'1.3.0'}},
+  {name:'Dybdedata – kurver (Kartverket)', kind:'wms', source:{url:'https://wms.geonorge.no/skwms1/wms.dybdedata2', layers:'Dybdekurver', version:'1.3.0'}},
+  {name:'Dybdedata – skyggerelieff (Kartverket)', kind:'wms', source:{url:'https://wms.geonorge.no/skwms1/wms.dybdedata2', layers:'Dybdelag', version:'1.3.0'}},
+  {name:'Akvakultur – lokaliteter (Fiskeridirektoratet)', kind:'wms', source:{url:'https://gis.fiskeridir.no/server/services/fiskeridirWMS_akva/MapServer/WMSServer', layers:'akvakultur_lokaliteter', version:'1.3.0'}},
+  {name:'Akvakultur – flater (Fiskeridirektoratet)', kind:'wms', source:{url:'https://gis.fiskeridir.no/server/services/fiskeridirWMS_akva/MapServer/WMSServer', layers:'akvakultur_flater', version:'1.3.0'}},
+  {name:'Mareano – bunnsedimenter (NGU)', kind:'wms', source:{url:'https://geo.ngu.no/mapserver/MarineBunnsedimenterWMS', layers:'Bunnsedimenter_kornstorrelse_detaljert', version:'1.3.0'}},
+  {name:'Flyfoto – Norge i bilder (Kartverket)', kind:'wms', source:{url:'https://wms.geonorge.no/skwms1/wms.nib', layers:'ortofoto', version:'1.3.0'}},
+];
+const TILSTAND = {1:'#2e8b57', 2:'#8bc34a', 3:'#d99a1f', 4:'#c84b3a'};
+
+// ---- Demodata (fiktiv lokalitet på Helgeland) ----------------------------
+function demoData(){
+  const c = [12.62, 66.115];
+  const poly = [[c[0]-0.012,c[1]-0.004],[c[0]+0.014,c[1]-0.0055],[c[0]+0.016,c[1]+0.004],[c[0]-0.010,c[1]+0.0045],[c[0]-0.012,c[1]-0.004]];
+  const stations = []; const names=['B1','B2','B3','B4','B5','B6','B7','B8','B9','B10'];
+  const tilst = [1,1,2,2,3,1,2,4,1,2];
+  for (let i=0;i<10;i++){ const a=i/10*Math.PI*2; const r=0.004+(i%3)*0.0025;
+    stations.push({type:'Feature',geometry:{type:'Point',coordinates:[c[0]+Math.cos(a)*r*2.2, c[1]+Math.sin(a)*r]},properties:{stasjon:names[i], tilstand:tilst[i], dyp_m:62+Math.round(Math.sin(a)*18), pH:(7.4-tilst[i]*0.12).toFixed(2), Eh_mV:Math.round(120-tilst[i]*55), kommentar: tilst[i]>=3?'Avvik – se rapport':''}}); }
+  const track = []; for (let i=0;i<=40;i++){ track.push([c[0]-0.015+i*0.0008, c[1]-0.003+Math.sin(i/3)*0.0015]); }
+  const depthClasses = [];
+  [[0,20,'#bfe3f2'],[20,40,'#86c5e5'],[40,60,'#4f9fd1'],[60,90,'#2a6fb0']].forEach((d,i)=>{
+    const s=0.018-i*0.0035; depthClasses.push({type:'Feature',geometry:{type:'Polygon',coordinates:[[[c[0]-s,c[1]-s*0.45],[c[0]+s,c[1]-s*0.45],[c[0]+s,c[1]+s*0.45],[c[0]-s,c[1]+s*0.45],[c[0]-s,c[1]-s*0.45]]]},properties:{fra_m:d[0],til_m:d[1],klasse:`${d[0]}–${d[1]} m`,_color:d[2]}}); });
+  const mapA = uuid(), mapB = uuid();
+  const L = (map,name,style,extra={}) => Object.assign({id:uuid(), map_id:map, name, kind:'vector', source:{}, style, visible:true, sort_order:0}, extra);
+  const layers = [
+    L(mapA,'Dybdeklasser (MBES)',{colorBy:{prop:'_color'}, fillOpacity:.45, width:0.5, color:'#2a6fb0'},{sort_order:0}),
+    L(mapA,'Lokalitetsgrense',{color:'#224754', fillOpacity:.05, width:2.5},{sort_order:1}),
+    L(mapA,'Surveylinje MBES 2026-09',{color:'#1f8a8a', width:2},{sort_order:2}),
+    L(mapA,'MOM-B stasjoner 2026-09',{colorBy:{prop:'tilstand', map:TILSTAND, legend:{1:'Tilstand 1',2:'Tilstand 2',3:'Tilstand 3',4:'Tilstand 4'}}, color:'#2e8b57', radius:7},{sort_order:3}),
+    L(mapB,'Lokalitetsgrense',{color:'#224754', fillOpacity:.08, width:2},{sort_order:0}),
+  ];
+  const features = {};
+  features[layers[0].id] = {type:'FeatureCollection', features: depthClasses};
+  features[layers[1].id] = {type:'FeatureCollection', features:[{type:'Feature',geometry:{type:'Polygon',coordinates:[poly]},properties:{navn:'Kvalvika (fiktiv)', lok_nr:'99999', MTB_tonn:3120}}]};
+  features[layers[2].id] = {type:'FeatureCollection', features:[{type:'Feature',geometry:{type:'LineString',coordinates:track},properties:{fartøy:'Aspecto AUV', dato:'2026-09-14', linjelengde_m:3100}}]};
+  features[layers[3].id] = {type:'FeatureCollection', features: stations};
+  features[layers[4].id] = {type:'FeatureCollection', features:[{type:'Feature',geometry:{type:'Polygon',coordinates:[[[12.40,66.02],[12.43,66.015],[12.44,66.03],[12.41,66.034],[12.40,66.02]]]},properties:{navn:'Håkabø (demo)'}}]};
+  features[layers[0].id].features.forEach(f=>f.properties._id=uuid());
+  Object.values(features).forEach(fc=>fc.features.forEach(f=>{f.properties._id=f.properties._id||uuid(); f.id=f.properties._id;}));
+  return {
+    maps:[
+      {id:mapA, title:'Kvalvika – MOM-B og MBES (demo)', description:'Fiktiv lokalitet. Viser hvordan surveydata, stasjoner og tilstand presenteres for kunde.', owner_email:'demo@aspecto.no', is_public:true, crs:'EPSG:25833', center_lng:c[0], center_lat:c[1], zoom:13.2, updated_at:'2026-10-18T09:00:00Z'},
+      {id:mapB, title:'Håkabø – lokalitetsutvikling (demo)', description:'Tomt arbeidskart for ny lokalitet.', owner_email:'demo@aspecto.no', is_public:false, crs:'EPSG:25833', center_lng:12.42, center_lat:66.025, zoom:13, updated_at:'2026-10-10T09:00:00Z'},
+    ],
+    layers, features,
+    comments:[{id:uuid(), map_id:mapA, lng:c[0]+0.009, lat:c[1]+0.0005, body:'Stasjon B8 er tilstand 4 – bør følges opp med ny prøvetaking etter brakklegging.', author:'kelsey@aspecto.no', resolved:false, created_at:'2026-10-15T10:12:00Z'},
+              {id:uuid(), map_id:mapA, lng:c[0]-0.009, lat:c[1]-0.002, body:'Kan dere legge inn fôrflåteposisjon?', author:'drift@kundeeksempel.no', resolved:true, created_at:'2026-10-12T14:40:00Z'}],
+    access:[{map_id:mapA, email:'drift@kundeeksempel.no', role:'viewer'}],
+  };
+}
+
+// ---- Datalager: demo (minne) --------------------------------------------
+class DemoStore {
+  constructor(){ this.d = demoData(); this.user = {email:'demo@aspecto.no', name:'Demo-bruker', staff:true}; }
+  async getUser(){ return this.user; }
+  async signIn(){ return this.user; } async signOut(){ this.user=null; }
+  async listMaps(){ return [...this.d.maps].sort((a,b)=>b.updated_at.localeCompare(a.updated_at)); }
+  async getMap(id){ return this.d.maps.find(m=>m.id===id) || null; }
+  async createMap(p){ const m={id:uuid(), is_public:false, owner_email:this.user?.email, updated_at:new Date().toISOString(), ...p}; this.d.maps.push(m); return m; }
+  async updateMap(id,p){ const m=await this.getMap(id); Object.assign(m,p,{updated_at:new Date().toISOString()}); return m; }
+  async deleteMap(id){ this.d.maps=this.d.maps.filter(m=>m.id!==id); }
+  async listLayers(mapId){ return this.d.layers.filter(l=>l.map_id===mapId).sort((a,b)=>a.sort_order-b.sort_order); }
+  async createLayer(mapId,p){ const l={id:uuid(), map_id:mapId, kind:'vector', source:{}, style:{}, visible:true, sort_order:this.d.layers.length, ...p}; this.d.layers.push(l); if(l.kind==='vector') this.d.features[l.id]={type:'FeatureCollection',features:[]}; return l; }
+  async updateLayer(id,p){ const l=this.d.layers.find(x=>x.id===id); Object.assign(l,p); return l; }
+  async deleteLayer(id){ this.d.layers=this.d.layers.filter(l=>l.id!==id); delete this.d.features[id]; }
+  async layerGeojson(id){ return this.d.features[id] || {type:'FeatureCollection',features:[]}; }
+  async importGeojson(id, fc){ const feats = fc.type==='FeatureCollection'?fc.features:[fc]; feats.forEach(f=>{f.properties=f.properties||{}; f.properties._id=uuid(); f.id=f.properties._id;}); this.d.features[id].features.push(...feats); return feats.length; }
+  async updateFeature(fid, geometry, props){ for(const fc of Object.values(this.d.features)){ const f=fc.features.find(x=>x.properties._id===fid); if(f){ if(geometry) f.geometry=geometry; if(props) f.properties={...props,_id:fid}; return; } } }
+  async deleteFeature(fid){ for(const fc of Object.values(this.d.features)){ fc.features=fc.features.filter(x=>x.properties._id!==fid); } }
+  async listComments(mapId){ return this.d.comments.filter(c=>c.map_id===mapId).sort((a,b)=>b.created_at.localeCompare(a.created_at)); }
+  async addComment(mapId,lng,lat,body){ const c={id:uuid(),map_id:mapId,lng,lat,body,author:this.user?.email,resolved:false,created_at:new Date().toISOString()}; this.d.comments.push(c); return c; }
+  async setCommentResolved(id,v){ const c=this.d.comments.find(x=>x.id===id); c.resolved=v; }
+  async deleteComment(id){ this.d.comments=this.d.comments.filter(c=>c.id!==id); }
+  async listAccess(mapId){ return this.d.access.filter(a=>a.map_id===mapId); }
+  async setAccess(mapId,email,role){ this.d.access=this.d.access.filter(a=>!(a.map_id===mapId&&a.email===email)); this.d.access.push({map_id:mapId,email,role}); }
+  async removeAccess(mapId,email){ this.d.access=this.d.access.filter(a=>!(a.map_id===mapId&&a.email===email)); }
+  async mapBbox(mapId){ const ls=await this.listLayers(mapId); let b=null; for(const l of ls){ if(l.kind!=='vector') continue; const fc=await this.layerGeojson(l.id); b=bboxOf(fc,b);} return b; }
+}
+
+// ---- Datalager: Supabase -------------------------------------------------
+class SupabaseStore {
+  constructor(){ this.sb = window.supabase.createClient(CFG.supabaseUrl, CFG.supabaseAnonKey); this.user=null; }
+  async getUser(){ const {data:{session}} = await this.sb.auth.getSession(); if(!session){ this.user=null; return null; }
+    const u=session.user; const email=(u.email||'').toLowerCase(); this.user={email, name:u.user_metadata?.full_name||u.user_metadata?.name||email, staff: email.endsWith('@'+(CFG.staffDomain||'aspecto.no'))}; return this.user; }
+  async signIn(){ const redirectTo = location.origin + location.pathname + (qs.get('map')?('?map='+qs.get('map')):''); const {error}=await this.sb.auth.signInWithOAuth({provider:'azure', options:{scopes:'email openid profile', redirectTo}}); if(error) throw error; }
+  async signOut(){ await this.sb.auth.signOut(); this.user=null; }
+  _q(r){ return r.then(({data,error})=>{ if(error) throw error; return data; }); }
+  async listMaps(){ return this._q(this.sb.from('kart_maps').select('*').order('updated_at',{ascending:false})); }
+  async getMap(id){ return this._q(this.sb.from('kart_maps').select('*').eq('id',id).maybeSingle()); }
+  async createMap(p){ const {data:{user}} = await this.sb.auth.getUser(); return this._q(this.sb.from('kart_maps').insert({...p, owner_id:user?.id, owner_email:user?.email}).select().single()); }
+  async updateMap(id,p){ return this._q(this.sb.from('kart_maps').update(p).eq('id',id).select().single()); }
+  async deleteMap(id){ return this._q(this.sb.from('kart_maps').delete().eq('id',id)); }
+  async listLayers(mapId){ return this._q(this.sb.from('kart_layers').select('*').eq('map_id',mapId).order('sort_order')); }
+  async createLayer(mapId,p){ return this._q(this.sb.from('kart_layers').insert({map_id:mapId, ...p}).select().single()); }
+  async updateLayer(id,p){ return this._q(this.sb.from('kart_layers').update(p).eq('id',id).select().single()); }
+  async deleteLayer(id){ return this._q(this.sb.from('kart_layers').delete().eq('id',id)); }
+  async layerGeojson(id){ const fc = await this._q(this.sb.rpc('kart_layer_geojson',{p_layer:id})); (fc.features||[]).forEach(f=>{f.id=f.properties._id;}); return fc; }
+  async importGeojson(id, fc){ return this._q(this.sb.rpc('kart_import_geojson',{p_layer:id, p_fc:fc})); }
+  async updateFeature(fid, geometry, props){ if(props){ delete props._id; } return this._q(this.sb.rpc('kart_update_feature',{p_id:fid, p_geometry:geometry||null, p_props:props||null})); }
+  async deleteFeature(fid){ return this._q(this.sb.from('kart_features').delete().eq('id',fid)); }
+  async listComments(mapId){ return this._q(this.sb.rpc('kart_list_comments',{p_map:mapId})); }
+  async addComment(mapId,lng,lat,body){ const id = await this._q(this.sb.rpc('kart_add_comment',{p_map:mapId,p_lng:lng,p_lat:lat,p_body:body})); return {id}; }
+  async setCommentResolved(id,v){ return this._q(this.sb.from('kart_comments').update({resolved:v}).eq('id',id)); }
+  async deleteComment(id){ return this._q(this.sb.from('kart_comments').delete().eq('id',id)); }
+  async listAccess(mapId){ return this._q(this.sb.from('kart_access').select('*').eq('map_id',mapId).order('email')); }
+  async setAccess(mapId,email,role){ return this._q(this.sb.from('kart_access').upsert({map_id:mapId,email:email.toLowerCase(),role})); }
+  async removeAccess(mapId,email){ return this._q(this.sb.from('kart_access').delete().eq('map_id',mapId).eq('email',email)); }
+  async mapBbox(mapId){ return this._q(this.sb.rpc('kart_map_bbox',{p_map:mapId})); }
+}
+
+// ---- Geometri-hjelpere ---------------------------------------------------
+function bboxOf(fc, b){
+  const walk = (c)=>{ if(typeof c[0]==='number'){ b = b? [Math.min(b[0],c[0]),Math.min(b[1],c[1]),Math.max(b[2],c[0]),Math.max(b[3],c[1])] : [c[0],c[1],c[0],c[1]]; } else c.forEach(walk); };
+  (fc.features||[]).forEach(f=>{ if(f.geometry&&f.geometry.coordinates) walk(f.geometry.coordinates); });
+  return b;
+}
+function haversine(a,b){ const R=6371000, toR=x=>x*Math.PI/180; const dLat=toR(b[1]-a[1]), dLng=toR(b[0]-a[0]); const h=Math.sin(dLat/2)**2+Math.cos(toR(a[1]))*Math.cos(toR(b[1]))*Math.sin(dLng/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
+function fmtDist(m){ return m>=1000 ? (m/1000).toFixed(2)+' km' : Math.round(m)+' m'; }
+function fmtArea(a){ return a>=1e6 ? (a/1e6).toFixed(3)+' km²' : a>=1e4 ? (a/1e4).toFixed(2)+' daa' : Math.round(a)+' m²'; }
+
+// ---- App-tilstand --------------------------------------------------------
+const store = DEMO ? new DemoStore() : new SupabaseStore();
+const S = { user:null, map:null, layers:[], comments:[], access:[], tab:'layers', mode:null, draft:[], measure:[], activeLayerId:null, popup:null };
+
+// ---- Kart (OpenLayers, EUREF89 UTM 32/33) --------------------------------
+// Fast grunnlag for alle kart: Kartverket topografisk norgeskart via WMS (wms.geonorge.no/skwms1/wms.topo).
+// Kartet rendres i EPSG:25832 (UTM 32N) sør for CRS_SPLIT_LAT og EPSG:25833 (UTM 33N) nord for.
+// Gjeldende CRS vises alltid nederst til høyre.
+const TOPO_WMS = 'https://wms.geonorge.no/skwms1/wms.topo';
+const CRS_SPLIT_LAT = 65.0;   // ≈ fylkesgrensa Trøndelag/Nordland (nord for Rørvik). Kan overstyres per kart.
+const CRS = {
+  'EPSG:25832': {label:'EPSG:25832', name:'EUREF89 UTM sone 32N', def:'+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', extent:[-1877994.66, 3932281.56, 836715.5, 9440581.95]},
+  'EPSG:25833': {label:'EPSG:25833', name:'EUREF89 UTM sone 33N', def:'+proj=utm +zone=33 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', extent:[-2465144.80, 4102893.55, 776625.76, 9408555.22]},
+};
+Object.entries(CRS).forEach(([k,v])=>proj4.defs(k, v.def));
+ol.proj.proj4.register(proj4);
+Object.entries(CRS).forEach(([k,v])=>ol.proj.get(k).setExtent(v.extent));
+function crsForLat(lat){ return lat < CRS_SPLIT_LAT ? 'EPSG:25832' : 'EPSG:25833'; }
+
+const { Map:OLMap, View, Overlay, Feature } = ol;
+const { Tile:TileLayer, Vector:VectorLayer } = ol.layer;
+const { TileWMS, Vector:VectorSource } = ol.source;
+const { Style, Fill, Stroke, Circle:CircleStyle, Text } = ol.style;
+const { fromLonLat, toLonLat, transform, transformExtent } = ol.proj;
+const GeoJSONFmt = new ol.format.GeoJSON();
+
+let map, view, VIEW_CRS = 'EPSG:25833';
+let topoLayer, draftSource, draftLayer, commentSource, commentLayer, popupOverlay, drawInteraction=null;
+const hoverBound = new Set();
+
+function wmsLayer(url, layers, opts={}){
+  return new TileLayer({ opacity: opts.opacity ?? 1, zIndex: opts.zIndex ?? 0, source: new TileWMS({
+    url, params:{ LAYERS: layers, VERSION: opts.version||'1.3.0', FORMAT: opts.format||'image/png', TRANSPARENT: opts.transparent ?? true, TILED:true },
+    projection: VIEW_CRS, serverType: opts.serverType, crossOrigin:'anonymous', attributions: opts.attrib }) });
+}
+function xyzLayer(tiles, opts={}){
+  // XYZ-fliser er Web Mercator; OL reprojiserer dem til UTM (litt uskarpt, men brukbart som overlegg)
+  return new TileLayer({ opacity: opts.opacity ?? 1, zIndex: opts.zIndex ?? 0, source: new ol.source.XYZ({ url: tiles[0], crossOrigin:'anonymous', projection:'EPSG:3857' }) });
+}
+function draftStyle(f){
+  const g=f.getGeometry().getType();
+  return new Style({ fill:new Fill({color:'rgba(31,138,138,.2)'}), stroke:new Stroke({color:'#1f8a8a', width:2, lineDash:[6,4]}),
+    image:new CircleStyle({radius:4, fill:new Fill({color:'#fff'}), stroke:new Stroke({color:'#1f8a8a', width:2})}),
+    text: g==='LineString' && f.get('_len') ? new Text({text:f.get('_len'), font:'12px IBM Plex Mono, monospace', placement:'line', offsetY:-8, fill:new Fill({color:'#16313b'}), stroke:new Stroke({color:'#fff', width:3})}) : undefined });
+}
+function commentStyle(f){
+  return new Style({ image:new CircleStyle({radius:8, fill:new Fill({color:f.get('resolved')?'#2e8b57':'#3b7fc4'}), stroke:new Stroke({color:'#fff', width:2})}),
+    text:new Text({text:'!', font:'bold 11px IBM Plex Sans, sans-serif', fill:new Fill({color:'#fff'})}) });
+}
+function hexToRgba(hex, a){ const h=(hex||'#1f8a8a').replace('#',''); const n=parseInt(h.length===3?h.split('').map(c=>c+c).join(''):h,16); return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${a})`; }
+function layerStyleFn(l){
+  const st=l.style||{};
+  return f => {
+    let color = st.color||'#1f8a8a';
+    if(st.colorBy && st.colorBy.prop){ const v=f.get(st.colorBy.prop); if(st.colorBy.map){ color = st.colorBy.map[String(v)] || color; } else if(v) color=v; }
+    return new Style({ fill:new Fill({color:hexToRgba(color, st.fillOpacity ?? .25)}), stroke:new Stroke({color, width:st.width ?? 2}),
+      image:new CircleStyle({radius:st.radius ?? 6, fill:new Fill({color}), stroke:new Stroke({color:'#fff', width:1.5})}) });
+  };
+}
+
+function initMap(){
+  draftSource = new VectorSource(); draftLayer = new VectorLayer({source:draftSource, style:draftStyle, zIndex:90});
+  commentSource = new VectorSource(); commentLayer = new VectorLayer({source:commentSource, style:commentStyle, zIndex:95});
+  popupOverlay = new Overlay({ element:$('#popup'), positioning:'bottom-center', offset:[0,-6], stopEvent:true, autoPan:{animation:{duration:200}} });
+  map = new OLMap({ target:'map', layers:[draftLayer, commentLayer], overlays:[popupOverlay], controls:[new ol.control.ScaleLine({units:'metric'})],
+    view: new View({ projection:VIEW_CRS, center: fromLonLat([14.5,66.5], VIEW_CRS), zoom:6, maxZoom:20, constrainResolution:false }) });
+  setViewCrs(VIEW_CRS, [14.5,66.5], 6);
+  map.on('pointermove', e => { if(e.dragging) return; const [x,y]=e.coordinate; $('#coords').textContent = fmtCoord(x,y); const hit = !S.mode && map.hasFeatureAtPixel(e.pixel, {layerFilter: l=>l!==draftLayer}); map.getTargetElement().style.cursor = hit?'pointer':''; });
+  map.on('singleclick', onMapClick);
+  $('#zoomIn').onclick = () => view.animate({zoom:view.getZoom()+1, duration:200}); $('#zoomOut').onclick = () => view.animate({zoom:view.getZoom()-1, duration:200}); $('#zoomFit').onclick = fitToData;
+  $('#popup').addEventListener('click', e=>{ if(e.target.classList.contains('close')) closePopup(); });
+}
+// Bytter prosjeksjon: ny View + nytt topo-grunnlag. Alle faglag tegnes på nytt i ny CRS.
+function setViewCrs(crs, centerLonLat, zoom){
+  VIEW_CRS = crs;
+  const c = CRS[crs];
+  if(topoLayer) map.removeLayer(topoLayer);
+  topoLayer = wmsLayer(TOPO_WMS, 'topo', {zIndex:0, transparent:false, format:'image/png', attrib:'© Kartverket'});
+  map.addLayer(topoLayer);
+  view = new View({ projection:crs, extent: c.extent, center: fromLonLat(centerLonLat, crs), zoom: zoom ?? 12, maxZoom:20 });
+  map.setView(view);
+  view.on('change:center', saveView); view.on('change:resolution', saveView);
+  $('#crsbadge').innerHTML = `<b>${c.label}</b> · ${c.name}`;
+  $('#crsbadge').title = 'Kartet og koordinatene vises i ' + c.name;
+}
+function fmtCoord(x,y){ return `N ${Math.round(y).toLocaleString('nb-NO')}  E ${Math.round(x).toLocaleString('nb-NO')}`; }
+function readFC(fc){ return GeoJSONFmt.readFeatures(fc, {dataProjection:'EPSG:4326', featureProjection:VIEW_CRS}); }
+function writeGeom(geom){ return GeoJSONFmt.writeGeometryObject(geom, {dataProjection:'EPSG:4326', featureProjection:VIEW_CRS}); }
+function removeLayerFromMap(l){ if(l._ol){ map.removeLayer(l._ol); l._ol=null; } }
+async function renderLayer(l){
+  removeLayerFromMap(l);
+  const z = 10 + (l.sort_order||0);
+  if(l.kind==='vector'){
+    const fc = l._fc || (l._fc = await store.layerGeojson(l.id));
+    const src = new VectorSource({features: readFC(fc)});
+    src.getFeatures().forEach(f=>f.set('_layer', l.id, true));
+    l._ol = new VectorLayer({source:src, style:layerStyleFn(l), zIndex:z, visible:l.visible!==false});
+  } else if(l.kind==='wms'){
+    const s=l.source; l._ol = wmsLayer(s.url, s.layers, {version:s.version, format:s.format, opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
+  } else {
+    l._ol = xyzLayer(l.source.tiles || [l.source.url], {opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
+  }
+  map.addLayer(l._ol);
+}
+async function renderAllLayers(){ for(const l of S.layers) await renderLayer(l); renderComments(); }
+function renderComments(){
+  commentSource.clear();
+  S.comments.forEach(c=>{ const f=new Feature({geometry:new ol.geom.Point(fromLonLat([c.lng,c.lat], VIEW_CRS)), id:c.id, resolved:!!c.resolved}); commentSource.addFeature(f); });
+}
+function layerExtent(l){ if(!l._ol || l.kind!=='vector') return null; const e=l._ol.getSource().getExtent(); return (e && isFinite(e[0]))? e : null; }
+async function fitToData(){
+  if(!S.map) return;
+  let ext=null; S.layers.forEach(l=>{ const e=layerExtent(l); if(e){ ext = ext? ol.extent.extend(ext,e) : e.slice(); } });
+  if(!ext){ try{ const b=await store.mapBbox(S.map.id); if(b) ext=transformExtent(b,'EPSG:4326',VIEW_CRS);}catch(e){} }
+  if(!ext) return;
+  if(ol.extent.getWidth(ext)<1 && ol.extent.getHeight(ext)<1) view.animate({center:ol.extent.getCenter(ext), zoom:14, duration:400});
+  else view.fit(ext, {padding:[60,60,60,60], duration:400, maxZoom:17});
+}
+
+// ---- Klikk, tegning, måling, kommentarer ---------------------------------
+function canEdit(){ return !!(S.user && (S.user.staff || S.access.some(a=>a.email===S.user.email&&a.role==='editor'))); }
+function setMode(m){
+  if(S.mode===m) m=null;
+  S.mode=m; draftSource.clear(); closePopup();
+  if(drawInteraction){ map.removeInteraction(drawInteraction); drawInteraction=null; }
+  document.querySelectorAll('#drawTools button').forEach(b=>b.classList.toggle('active', b.dataset.mode===m));
+  $('#toolbar').parentElement.classList.toggle('mode-draw', !!m);
+  const h=$('#modehint');
+  const txt={point:'Klikk i kartet for å plassere punkt', line:'Klikk for å legge til punkter – dobbeltklikk for å fullføre', polygon:'Klikk for å legge til hjørner – dobbeltklikk for å fullføre', measure:'Klikk for å måle – dobbeltklikk for å avslutte', comment:'Klikk der kommentaren gjelder'}[m];
+  if(txt){ h.hidden=false; h.innerHTML=`<span>${txt}</span><button id="cancelDraft">Avbryt</button>`; $('#cancelDraft').onclick=()=>setMode(null); }
+  else h.hidden=true;
+  if(m==='point'||m==='line'||m==='polygon'||m==='measure'){
+    const type = {point:'Point', line:'LineString', polygon:'Polygon', measure:'LineString'}[m];
+    drawInteraction = new ol.interaction.Draw({source:draftSource, type, style:draftStyle});
+    if(m==='measure'){
+      drawInteraction.on('drawstart', e=>{ e.feature.getGeometry().on('change', ev=>{ const len=ol.sphere.getLength(ev.target, {projection:VIEW_CRS}); e.feature.set('_len', fmtDist(len)); h.querySelector('span').textContent=`Avstand: ${fmtDist(len)} – dobbeltklikk for å avslutte`; }); });
+      drawInteraction.on('drawend', ()=>{ setTimeout(()=>{ map.removeInteraction(drawInteraction); drawInteraction=null; h.querySelector('span').textContent += ' (klikk Avbryt for å fjerne)'; },0); });
+    } else {
+      drawInteraction.on('drawend', e=>{ const g=writeGeom(e.feature.getGeometry()); setTimeout(()=>saveDrawn(g),0); });
+    }
+    map.addInteraction(drawInteraction);
+  }
+}
+async function onMapClick(e){
+  if(drawInteraction) return;
+  const ll = toLonLat(e.coordinate, VIEW_CRS).map(v=>+v.toFixed(6));
+  if(S.mode==='comment'){ openCommentForm(ll, e.coordinate); return; }
+  let hit=null; map.forEachFeatureAtPixel(e.pixel, (f,layer)=>{ if(layer===draftLayer) return; hit={f,layer}; return true; }, {hitTolerance:4});
+  if(!hit){ closePopup(); return; }
+  if(hit.layer===commentLayer){ showComment(hit.f.get('id')); return; }
+  showFeature(hit.f, e.coordinate);
+}
+async function saveDrawn(geometry){
+  if(!canEdit()){ toast('Du har ikke redigeringstilgang'); setMode(null); return; }
+  let target = S.layers.find(l=>l.id===S.activeLayerId && l.kind==='vector') || S.layers.find(l=>l.kind==='vector' && l.name==='Tegninger');
+  if(!target){ target = await store.createLayer(S.map.id,{name:'Tegninger', kind:'vector', style:{color:'#c84b3a', fillOpacity:.2, width:2, radius:6}, sort_order:S.layers.length}); S.layers.push(target); S.activeLayerId=target.id; }
+  const navn = await dialog({title:'Lagre objekt', fields:[{k:'navn',label:'Navn',value:''},{k:'notat',label:'Notat',value:'',type:'textarea'}], ok:'Lagre'});
+  setMode(null);
+  if(!navn) return;
+  await store.importGeojson(target.id,{type:'Feature',geometry,properties:{navn:navn.navn, notat:navn.notat, opprettet:new Date().toISOString().slice(0,10), av:S.user?.email}});
+  target._fc = await store.layerGeojson(target.id); await renderLayer(target); renderPanel();
+  toast('Lagret i «'+target.name+'»');
+}
+function closePopup(){ popupOverlay.setPosition(undefined); $('#popup').hidden=true; }
+function popupAt(coord, html){ const el=$('#popup'); el.innerHTML=`<button class="close" aria-label="Lukk">×</button>${html}`; el.hidden=false; popupOverlay.setPosition(coord); return el; }
+function showFeature(f, coord){
+  const p={...f.getProperties()}; delete p.geometry; delete p._layer; const fid=p._id; delete p._id; delete p._color;
+  const rows=Object.entries(p).filter(([k,v])=>v!==''&&v!==null&&v!==undefined).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+  const layer=S.layers.find(l=>l.id===f.get('_layer'));
+  const title = p.navn||p.name||p.stasjon||p.klasse||layer?.name||'Objekt';
+  const g=f.getGeometry(); const gt=g.getType(); let geomInfo='';
+  if(gt==='Point'){ const [x,y]=g.getCoordinates(); geomInfo=`<tr><td>posisjon</td><td class="mono">${fmtCoord(x,y)}</td></tr>`; }
+  else if(gt==='LineString'||gt==='MultiLineString') geomInfo=`<tr><td>lengde</td><td>${fmtDist(ol.sphere.getLength(g,{projection:VIEW_CRS}))}</td></tr>`;
+  else if(gt==='Polygon'||gt==='MultiPolygon') geomInfo=`<tr><td>areal</td><td>${fmtArea(ol.sphere.getArea(g,{projection:VIEW_CRS}))}</td></tr>`;
+  const el=popupAt(coord, `<h4>${esc(title)}</h4><div class="hint" style="margin-bottom:6px">${esc(layer?.name||'')}</div><table>${rows}${geomInfo}</table>${canEdit()?`<div class="row" style="margin-top:8px"><button class="btn small" id="pfEdit">Rediger</button><button class="btn small danger" id="pfDel">Slett</button></div>`:''}`);
+  if(canEdit()&&layer){
+    el.querySelector('#pfEdit').onclick=async()=>{ const fields=Object.entries(p).map(([k,v])=>({k,label:k,value:v})); if(!fields.some(x=>x.k==='navn')) fields.unshift({k:'navn',label:'navn',value:''}); const res=await dialog({title:'Rediger attributter',fields,ok:'Lagre'}); if(!res) return; await store.updateFeature(fid,null,res); layer._fc=await store.layerGeojson(layer.id); await renderLayer(layer); closePopup(); toast('Oppdatert'); };
+    el.querySelector('#pfDel').onclick=async()=>{ const ok=await dialog({title:'Slette objektet?',fields:[],ok:'Slett'}); if(!ok) return; await store.deleteFeature(fid); layer._fc=await store.layerGeojson(layer.id); await renderLayer(layer); closePopup(); toast('Slettet'); };
+  }
+}
+function openCommentForm(ll, coord){
+  if(!S.user){ toast('Logg inn for å kommentere'); setMode(null); return; }
+  const el=popupAt(coord, `<h4>Ny kommentar</h4><textarea id="cBody" placeholder="Skriv kommentar…"></textarea><div class="row" style="margin-top:8px"><button class="btn primary small" id="cSave">Legg til</button><button class="btn small" id="cCancel">Avbryt</button></div>`);
+  el.querySelector('#cBody').focus();
+  el.querySelector('#cCancel').onclick=()=>{closePopup(); setMode(null);};
+  el.querySelector('#cSave').onclick=async()=>{ const body=el.querySelector('#cBody').value.trim(); if(!body) return; await store.addComment(S.map.id,ll[0],ll[1],body); S.comments=await store.listComments(S.map.id); renderComments(); closePopup(); setMode(null); if(S.tab==='comments') renderPanel(); toast('Kommentar lagt til'); };
+}
+function showComment(id){
+  const c=S.comments.find(x=>x.id===id); if(!c) return;
+  const coord=fromLonLat([c.lng,c.lat], VIEW_CRS);
+  const mine = S.user && c.author===S.user.email;
+  const el=popupAt(coord, `<h4>Kommentar</h4><div style="white-space:pre-wrap">${esc(c.body)}</div><div class="hint mono" style="margin-top:6px">${esc(c.author||'')} · ${fmtDate(c.created_at)}${c.resolved?' · løst':''}</div>${(S.user&&(mine||canEdit()))?`<div class="row" style="margin-top:8px"><button class="btn small" id="cRes">${c.resolved?'Gjenåpne':'Marker som løst'}</button><button class="btn small danger" id="cDel">Slett</button></div>`:''}`);
+  const r=el.querySelector('#cRes'); if(r){ r.onclick=async()=>{ await store.setCommentResolved(c.id,!c.resolved); S.comments=await store.listComments(S.map.id); renderComments(); closePopup(); if(S.tab==='comments') renderPanel(); };
+    el.querySelector('#cDel').onclick=async()=>{ await store.deleteComment(c.id); S.comments=await store.listComments(S.map.id); renderComments(); closePopup(); if(S.tab==='comments') renderPanel(); }; }
+}
+
+// ---- Panel ---------------------------------------------------------------
+const ICON={ eye:'<svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>', target:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg>', gear:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>', down:'<svg viewBox="0 0 24 24"><path d="M12 3v12M6 9l6 6 6-6M4 21h16"/></svg>', trash:'<svg viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>', pen:'<svg viewBox="0 0 24 24"><path d="M3 21l4-1 11-11-3-3L4 17z"/></svg>' };
+
+function renderUser(){
+  const u=S.user; const el=$('#userchip');
+  if(u) el.innerHTML=`<span class="dot"></span><span>${esc(u.name||u.email)}${u.staff?' · ansatt':''}</span><button class="btn ghost small" id="logout">Logg ut</button>`;
+  else el.innerHTML=`<button class="btn ghost small" id="login"><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z"/></svg>Logg inn med Microsoft</button>`;
+  const lo=$('#logout'); if(lo) lo.onclick=async()=>{ await store.signOut(); S.user=null; boot(); };
+  const li=$('#login'); if(li) li.onclick=()=>store.signIn().catch(e=>toast('Innlogging feilet: '+e.message));
+}
+function setTab(t){ S.tab=t; document.querySelectorAll('#tabs button').forEach(b=>b.classList.toggle('active',b.dataset.tab===t)); renderPanel(); }
+document.querySelectorAll('#tabs button').forEach(b=>b.onclick=()=>setTab(b.dataset.tab));
+$('#panelToggle').onclick=()=>$('#panel').classList.toggle('open');
+
+async function renderMapsList(){
+  $('#tabs').hidden=true; $('#panelTitle').textContent='Kart'; $('#mapTitle').value=''; $('#mapTitle').readOnly=true;
+  $('#panelActions').innerHTML = (S.user&&S.user.staff)?'<button class="btn primary small" id="newMap">+ Nytt kart</button>':'';
+  const body=$('#panelBody');
+  if(!S.user && !DEMO){ body.innerHTML='<div class="welcome"><img src="logo-navy.png" alt="Aspecto"><h3>AGIS – AspectoGIS</h3><p>Kartportal for surveydata, lokaliteter og miljøundersøkelser.</p></div><div class="notice">Logg inn med Microsoft-kontoen din for å se kartene dine. Kunder bruker samme innlogging (gjestekonto i Aspecto).</div>'; return; }
+  let maps=[]; try{ maps=await store.listMaps(); }catch(e){ body.innerHTML=`<div class="notice">Kunne ikke hente kart: ${esc(e.message)}</div>`; return; }
+  body.innerHTML = (DEMO?'<div class="notice">Demo-modus: data lagres ikke. AGIS kobles til Supabase i konfigurasjonen for drift.</div>':'') +
+    (maps.length? maps.map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small></button>`).join('') : '<div class="hint">Ingen kart ennå.</div>');
+  body.querySelectorAll('.mapcard').forEach(b=>b.onclick=()=>openMap(b.dataset.id));
+  const nm=$('#newMap'); if(nm) nm.onclick=async()=>{ const r=await dialog({title:'Nytt kart',fields:[{k:'title',label:'Tittel',value:''},{k:'description',label:'Beskrivelse',value:'',type:'textarea'}],ok:'Opprett'}); if(!r||!r.title) return; const [lng,lat]=toLonLat(view.getCenter(),VIEW_CRS); const m=await store.createMap({title:r.title,description:r.description,center_lng:lng,center_lat:lat,zoom:view.getZoom(),crs:VIEW_CRS}); openMap(m.id); };
+}
+function renderPanel(){
+  if(!S.map) return renderMapsList();
+  $('#tabs').hidden=false;
+  const body=$('#panelBody'); const t=S.tab;
+  $('#panelTitle').textContent = {layers:'Lag', comments:'Kommentarer', share:'Deling og innbygging'}[t];
+  $('#panelActions').innerHTML = (t==='layers'&&canEdit())?'<button class="btn small" id="addLayer">+ Legg til lag</button>':'';
+  if(t==='layers'){
+    const rows=[...S.layers].sort((a,b)=>b.sort_order-a.sort_order).map(l=>{
+      const st=l.style||{}; const n = l.kind==='vector' ? (l._fc?l._fc.features.length+' objekter':'…') : l.kind.toUpperCase();
+      let legend=''; if(st.colorBy&&st.colorBy.map){ legend='<div class="legend">'+Object.entries(st.colorBy.map).map(([k,v])=>`<span><i style="background:${v}"></i>${esc(st.colorBy.legend?.[k]||k)}</span>`).join('')+'</div>'; }
+      return `<div class="layer${S.activeLayerId===l.id?' active':''}" data-id="${l.id}">
+        <input type="checkbox" ${l.visible?'checked':''} title="Vis/skjul" data-act="vis">
+        <div><div class="name" title="${esc(l.name)}">${esc(l.name)}${S.activeLayerId===l.id&&canEdit()?'<span class="pill">tegner hit</span>':''}</div><div class="meta">${n}</div></div>
+        <div class="acts"><button class="iconbtn" data-act="zoom" title="Zoom til lag">${ICON.target}</button>${canEdit()?`<button class="iconbtn" data-act="edit" title="Innstillinger">${ICON.gear}</button>`:''}${l.kind==='vector'?`<button class="iconbtn" data-act="dl" title="Last ned GeoJSON">${ICON.down}</button>`:''}</div>
+        ${legend}</div>`; }).join('');
+    body.innerHTML = rows || '<div class="hint">Ingen lag ennå. Legg til et lag eller last opp GeoJSON.</div>';
+    body.querySelectorAll('.layer').forEach(row=>{ const l=S.layers.find(x=>x.id===row.dataset.id);
+      row.querySelector('[data-act=vis]').onchange=async e=>{ l.visible=e.target.checked; if(l._ol) l._ol.setVisible(l.visible); if(canEdit()) store.updateLayer(l.id,{visible:l.visible}).catch(err); };
+      row.querySelector('[data-act=zoom]').onclick=()=>{ const e=layerExtent(l); if(e) view.fit(e,{padding:[60,60,60,60],duration:400,maxZoom:17}); };
+      const ed=row.querySelector('[data-act=edit]'); if(ed) ed.onclick=()=>layerSettings(l);
+      const dl=row.querySelector('[data-act=dl]'); if(dl) dl.onclick=()=>download(`${l.name.replace(/[^\w\-æøåÆØÅ ]/g,'_')}.geojson`, JSON.stringify(l._fc||{type:'FeatureCollection',features:[]}));
+      row.querySelector('.name').onclick=()=>{ if(canEdit()&&l.kind==='vector'){ S.activeLayerId=l.id; renderPanel(); } };
+    });
+    const al=$('#addLayer'); if(al) al.onclick=addLayerDialog;
+  }
+  if(t==='comments'){
+    body.innerHTML = (S.comments.length? S.comments.map(c=>`<div class="comment${c.resolved?' resolved':''}" data-id="${c.id}"><div>${esc(c.body)}</div><div class="who">${esc(c.author||'')} · ${fmtDate(c.created_at)}${c.resolved?' · løst':''}</div></div>`).join('') : '<div class="hint">Ingen kommentarer. Bruk kommentarverktøyet i kartet for å legge til.</div>');
+    body.querySelectorAll('.comment').forEach(el=>el.onclick=()=>{ const c=S.comments.find(x=>x.id===el.dataset.id); view.animate({center:fromLonLat([c.lng,c.lat],VIEW_CRS), zoom:Math.max(view.getZoom(),14), duration:400}, ()=>showComment(c.id)); });
+  }
+  if(t==='share'){
+    const link = location.origin+location.pathname+'?map='+S.map.id;
+    const embed = `<iframe src="${link}&embed=1" width="100%" height="560" style="border:0;border-radius:8px" loading="lazy" allowfullscreen></iframe>`;
+    body.innerHTML = `
+      ${canEdit()?`<div class="field"><label><input type="checkbox" id="isPublic" ${S.map.is_public?'checked':''}> Offentlig kart (alle med lenken kan se, uten innlogging)</label><div class="hint">Skru på for kart som skal vises åpent på aspecto.no.</div></div>`:''}
+      <div class="section"><h3>Lenke</h3><div class="row"><input class="mono" id="shareLink" value="${esc(link)}" readonly style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><button class="btn small" id="copyLink">Kopier</button></div></div>
+      <div class="section"><h3>Innbygging på nettside</h3><pre class="embed" id="embedCode">${esc(embed)}</pre><button class="btn small" id="copyEmbed">Kopier kode</button><div class="hint" style="margin-top:6px">Innlogging skjer ikke inne i rammen – kart som bygges inn bør være offentlige, ellers vises en «Åpne i AGIS»-knapp.</div></div>
+      ${canEdit()?`<div class="section"><h3>Tilgang per e-post</h3><div id="accessList">${S.access.map(a=>`<div class="access"><span>${esc(a.email)} <span class="pill">${a.role==='editor'?'redigerer':'leser'}</span></span><button class="iconbtn" data-email="${esc(a.email)}" title="Fjern">${ICON.trash}</button></div>`).join('')||'<div class="hint">Ingen eksterne. Ansatte (@'+esc(CFG.staffDomain||'aspecto.no')+') har alltid tilgang.</div>'}</div>
+        <div class="row" style="margin-top:8px"><input id="accEmail" placeholder="kunde@firma.no" type="email" style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><select id="accRole" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><option value="viewer">Leser</option><option value="editor">Redigerer</option></select><button class="btn small" id="accAdd">Legg til</button></div>
+        <div class="hint" style="margin-top:6px">Personen må også være invitert som gjest i Aspectos Microsoft-tenant for å kunne logge inn (MFA håndheves der).</div></div>
+      <div class="section"><h3>Koordinatsystem</h3><div class="row"><select id="crsSel" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)">${Object.entries(CRS).map(([k,v])=>`<option value="${k}" ${k===VIEW_CRS?'selected':''}>${v.label} – ${v.name}</option>`).join('')}</select></div><div class="hint" style="margin-top:6px">Standard: UTM 32 sør for ${CRS_SPLIT_LAT}°N, UTM 33 nord for. Grunnlaget er alltid Kartverket topografisk norgeskart.</div></div>
+      <div class="section"><h3>Kart</h3><div class="row"><button class="btn small" id="editMeta">Rediger tittel/beskrivelse</button><button class="btn small danger" id="delMap">Slett kart</button></div></div>`:''}`;
+    $('#copyLink').onclick=()=>copy(link); $('#copyEmbed').onclick=()=>copy(embed);
+    const ip=$('#isPublic'); if(ip) ip.onchange=async()=>{ S.map.is_public=ip.checked; await store.updateMap(S.map.id,{is_public:ip.checked}); toast(ip.checked?'Kartet er nå offentlig':'Kartet er nå privat'); };
+    const aa=$('#accAdd'); if(aa) aa.onclick=async()=>{ const em=$('#accEmail').value.trim().toLowerCase(); if(!em.includes('@')) return; await store.setAccess(S.map.id,em,$('#accRole').value); S.access=await store.listAccess(S.map.id); renderPanel(); };
+    body.querySelectorAll('[data-email]').forEach(b=>b.onclick=async()=>{ await store.removeAccess(S.map.id,b.dataset.email); S.access=await store.listAccess(S.map.id); renderPanel(); });
+    const cs=$('#crsSel'); if(cs) cs.onchange=()=>setMapCrs(cs.value);
+    const em=$('#editMeta'); if(em) em.onclick=async()=>{ const r=await dialog({title:'Rediger kart',fields:[{k:'title',label:'Tittel',value:S.map.title},{k:'description',label:'Beskrivelse',value:S.map.description||'',type:'textarea'}],ok:'Lagre'}); if(!r) return; Object.assign(S.map, await store.updateMap(S.map.id,r)); $('#mapTitle').value=S.map.title; renderPanel(); };
+    const dm=$('#delMap'); if(dm) dm.onclick=async()=>{ const ok=await dialog({title:`Slette «${S.map.title}»?`,fields:[],ok:'Slett kartet',text:'Alle lag, objekter og kommentarer slettes.'}); if(!ok) return; await store.deleteMap(S.map.id); history.replaceState(null,'','?'); boot(); };
+  }
+}
+async function addLayerDialog(){
+  const kind = await dialog({title:'Legg til lag', fields:[{k:'kind',label:'Type',type:'select',value:'file',options:[['file','Last opp GeoJSON-fil'],['empty','Tomt lag (for tegning)'],['catalog','Fra katalog (Fiskeridirektoratet, Kartverket, NGU)'],['wms','Egen WMS-tjeneste'],['xyz','Egne rasterfliser (XYZ)']]}], ok:'Neste'});
+  if(!kind) return;
+  const order=S.layers.length;
+  if(kind.kind==='file'){
+    const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,.geojson,application/geo+json,application/json';
+    inp.onchange=async()=>{ const f=inp.files[0]; if(!f) return; let fc; try{ fc=JSON.parse(await f.text()); }catch(e){ toast('Filen er ikke gyldig JSON'); return; }
+      if(fc.type==='Feature') fc={type:'FeatureCollection',features:[fc]}; if(fc.type!=='FeatureCollection'){ toast('Forventet GeoJSON FeatureCollection'); return; }
+      const l=await store.createLayer(S.map.id,{name:f.name.replace(/\.(geo)?json$/i,''), kind:'vector', style:{color:randomColor(), fillOpacity:.25, width:2, radius:6}, sort_order:order});
+      const n=await store.importGeojson(l.id, fc); l._fc=await store.layerGeojson(l.id); S.layers.push(l); S.activeLayerId=l.id; await renderLayer(l); renderPanel(); fitToData(); toast(`${n} objekter importert`); };
+    inp.click(); return;
+  }
+  if(kind.kind==='empty'){ const r=await dialog({title:'Nytt lag',fields:[{k:'name',label:'Navn',value:'Nytt lag'}],ok:'Opprett'}); if(!r) return; const l=await store.createLayer(S.map.id,{name:r.name,kind:'vector',style:{color:randomColor(),fillOpacity:.25,width:2,radius:6},sort_order:order}); l._fc={type:'FeatureCollection',features:[]}; S.layers.push(l); S.activeLayerId=l.id; await renderLayer(l); renderPanel(); return; }
+  if(kind.kind==='catalog'){ const r=await dialog({title:'Velg faglag',fields:[{k:'i',label:'Lag',type:'select',value:'0',options:CATALOG.map((c,i)=>[String(i),c.name])}],ok:'Legg til'}); if(!r) return; const c=CATALOG[+r.i]; const l=await store.createLayer(S.map.id,{name:c.name,kind:c.kind,source:c.source,style:{opacity:.85},sort_order:order}); S.layers.push(l); await renderLayer(l); renderPanel(); return; }
+  if(kind.kind==='wms'){ const r=await dialog({title:'WMS-lag',fields:[{k:'name',label:'Navn',value:''},{k:'url',label:'WMS-URL (GetCapabilities-adressen uten parametre)',value:''},{k:'layers',label:'Lagnavn (LAYERS)',value:''},{k:'version',label:'Versjon',type:'select',value:'1.3.0',options:[['1.3.0','1.3.0'],['1.1.1','1.1.1']]}],ok:'Legg til'}); if(!r||!r.url) return; const l=await store.createLayer(S.map.id,{name:r.name||r.layers,kind:'wms',source:{url:r.url,layers:r.layers,version:r.version},style:{opacity:.85},sort_order:order}); S.layers.push(l); await renderLayer(l); renderPanel(); return; }
+  if(kind.kind==='xyz'){ const r=await dialog({title:'Rasterfliser',fields:[{k:'name',label:'Navn',value:''},{k:'url',label:'URL-mal med {z}/{x}/{y}',value:''}],ok:'Legg til'}); if(!r||!r.url) return; const l=await store.createLayer(S.map.id,{name:r.name||'Raster',kind:'xyz',source:{tiles:[r.url]},style:{opacity:.85},sort_order:order}); S.layers.push(l); await renderLayer(l); renderPanel(); }
+}
+async function layerSettings(l){
+  const st=l.style||{};
+  const fields=[{k:'name',label:'Navn',value:l.name}];
+  if(l.kind==='vector'){ fields.push({k:'color',label:'Farge',type:'color',value:st.color||'#1f8a8a'},{k:'fillOpacity',label:'Fyll-gjennomsiktighet (0–1)',value:st.fillOpacity??.25},{k:'width',label:'Linjebredde',value:st.width??2},{k:'radius',label:'Punktstørrelse',value:st.radius??6},{k:'colorProp',label:'Fargelegg etter attributt (valgfritt, f.eks. tilstand)',value:st.colorBy?.prop||''}); }
+  else fields.push({k:'opacity',label:'Gjennomsiktighet (0–1)',value:st.opacity??.85});
+  const r=await dialog({title:'Laginnstillinger',fields,ok:'Lagre',extra:'<button class="btn small danger" id="dlgDelete">Slett lag</button>'});
+  if(r==='__delete'){ await store.deleteLayer(l.id); removeLayerFromMap(l); S.layers=S.layers.filter(x=>x.id!==l.id); renderPanel(); toast('Lag slettet'); return; }
+  if(!r) return;
+  const style = l.kind==='vector' ? {...st, color:r.color, fillOpacity:+r.fillOpacity, width:+r.width, radius:+r.radius, colorBy: r.colorProp ? (r.colorProp==='tilstand'?{prop:'tilstand',map:TILSTAND,legend:{1:'Tilstand 1',2:'Tilstand 2',3:'Tilstand 3',4:'Tilstand 4'}}:{prop:r.colorProp}) : undefined} : {...st, opacity:+r.opacity};
+  if(style.colorBy===undefined) delete style.colorBy;
+  Object.assign(l, await store.updateLayer(l.id,{name:r.name, style}), {_fc:l._fc});
+  await renderLayer(l); renderPanel();
+}
+
+// ---- Dialog / toast / hjelpere -------------------------------------------
+function dialog({title, fields, ok, text, extra}){
+  return new Promise(res=>{
+    const host=$('#dialogHost');
+    host.innerHTML=`<div class="dialog" role="dialog" aria-modal="true"><form class="box"><h3>${esc(title)}</h3>${text?`<p class="hint">${esc(text)}</p>`:''}${fields.map(f=>`<div class="field"><label for="f_${f.k}">${esc(f.label)}</label>${f.type==='textarea'?`<textarea id="f_${f.k}" name="${f.k}" rows="3">${esc(f.value)}</textarea>`:f.type==='select'?`<select id="f_${f.k}" name="${f.k}">${f.options.map(o=>`<option value="${esc(o[0])}" ${o[0]==f.value?'selected':''}>${esc(o[1])}</option>`).join('')}</select>`:`<input id="f_${f.k}" name="${f.k}" type="${f.type||'text'}" value="${esc(f.value)}">`}</div>`).join('')}<div class="row" style="justify-content:space-between;margin-top:6px"><div>${extra||''}</div><div class="row"><button type="button" class="btn" id="dlgCancel">Avbryt</button><button type="submit" class="btn primary">${esc(ok)}</button></div></div></form></div>`;
+    const form=host.querySelector('form'); const first=form.querySelector('input,textarea,select'); if(first) first.focus();
+    const close=v=>{ host.innerHTML=''; res(v); };
+    host.querySelector('#dlgCancel').onclick=()=>close(null);
+    const del=host.querySelector('#dlgDelete'); if(del) del.onclick=()=>close('__delete');
+    form.onsubmit=e=>{ e.preventDefault(); const o={}; fields.forEach(f=>o[f.k]=form.elements[f.k].value); close(fields.length?o:true); };
+    host.querySelector('.dialog').onclick=e=>{ if(e.target.classList.contains('dialog')) close(null); };
+  });
+}
+let toastT; function toast(msg){ let t=$('.toast'); if(!t){ t=document.createElement('div'); t.className='toast'; document.body.appendChild(t);} t.textContent=msg; clearTimeout(toastT); toastT=setTimeout(()=>t.remove(),2600); }
+function err(e){ console.error(e); toast('Feil: '+(e.message||e)); }
+function copy(s){ (navigator.clipboard?.writeText(s)||Promise.reject()).then(()=>toast('Kopiert'),()=>{ const i=$('#shareLink'); if(i){ i.select(); } toast('Marker og kopier manuelt'); }); }
+function download(name, text){ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type:'application/geo+json'})); a.download=name; document.body.appendChild(a); a.click(); a.remove(); }
+function randomColor(){ const c=['#1f8a8a','#224754','#c84b3a','#d99a1f','#3b7fc4','#7b4fa3','#2e8b57']; return c[Math.floor(Math.random()*c.length)]; }
+
+// ---- Åpne kart / oppstart ---------------------------------------------------
+async function openMap(id){
+  let m; try{ m=await store.getMap(id);}catch(e){ err(e); }
+  if(!m){ toast('Fant ikke kartet, eller du mangler tilgang'); history.replaceState(null,'','?'); return renderMapsList(); }
+  S.layers.forEach(removeLayerFromMap); closePopup(); setMode(null);
+  S.map=m; S.layers=[]; S.comments=[]; S.activeLayerId=null; S.tab='layers';
+  if(!EMBED) history.replaceState(null,'',`?map=${id}`);
+  $('#mapTitle').value=m.title; $('#mapTitle').readOnly=true;
+  try{ [S.layers,S.comments,S.access] = await Promise.all([store.listLayers(id), store.listComments(id), store.listAccess(id).catch(()=>[])]); }catch(e){ err(e); }
+  for(const l of S.layers){ if(l.kind==='vector'){ try{ l._fc=await store.layerGeojson(l.id);}catch(e){ l._fc={type:'FeatureCollection',features:[]}; } } }
+  const can=canEdit();
+  $('#mapTitle').readOnly=!can; if(can){ $('#mapTitle').onchange=()=>{ S.map.title=$('#mapTitle').value; store.updateMap(S.map.id,{title:S.map.title}).catch(err); }; }
+  $('#drawTools').hidden = !(can || S.user);  // kunder kan måle/kommentere
+  document.querySelectorAll('#drawTools [data-mode=point],#drawTools [data-mode=line],#drawTools [data-mode=polygon]').forEach(b=>b.hidden=!can);
+  // CRS: lagret på kartet, ellers bestemt av senter (eller av dataene om senter mangler)
+  let centerLL = (m.center_lng && m.center_lat) ? [m.center_lng, m.center_lat] : null;
+  if(!centerLL){ let b=null; S.layers.filter(l=>l._fc).forEach(l=>{ b=bboxOf(l._fc,b); }); centerLL = b ? [(b[0]+b[2])/2,(b[1]+b[3])/2] : [14.5,66.5]; }
+  const crs = m.crs && CRS[m.crs] ? m.crs : crsForLat(centerLL[1]);
+  S.suppressSave=true;
+  setViewCrs(crs, centerLL, m.zoom||12);
+  await renderAllLayers();
+  if(!(m.center_lng && m.center_lat)) await fitToData();
+  setTimeout(()=>{ S.suppressSave=false; }, 800);
+  if(EMBED){ const b=$('#embedbadge'); b.hidden=false; b.innerHTML=`<img src="logo-white.png" alt="Aspecto" style="height:18px;width:auto"><span>${esc(m.title)}</span><a href="${location.origin+location.pathname}?map=${id}" target="_top" rel="noopener">Åpne i AGIS →</a>`; }
+  setTab('layers');
+  if(window.innerWidth<=760) $('#panel').classList.remove('open');
+}
+let viewT; function saveView(){ if(S.suppressSave) return; clearTimeout(viewT); viewT=setTimeout(()=>{ if(!S.map||!canEdit()||!view) return; const [lng,lat]=toLonLat(view.getCenter(), VIEW_CRS); store.updateMap(S.map.id,{center_lng:lng,center_lat:lat,zoom:view.getZoom()}).catch(()=>{}); }, 1500); }
+async function setMapCrs(crs){
+  if(!S.map || !CRS[crs] || crs===VIEW_CRS) return;
+  const c=toLonLat(view.getCenter(), VIEW_CRS); const z=view.getZoom();
+  S.suppressSave=true; setViewCrs(crs, c, z); await renderAllLayers(); setTimeout(()=>{S.suppressSave=false;},800);
+  S.map.crs=crs; if(canEdit()) store.updateMap(S.map.id,{crs}).catch(()=>{});
+  renderPanel(); toast('Kartet vises nå i '+CRS[crs].name);
+}
+
+document.querySelectorAll('#drawTools button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
+$('#brandLink').onclick=e=>{ e.preventDefault(); S.layers.forEach(removeLayerFromMap); S.layers=[]; S.comments=[]; renderComments(); closePopup(); setMode(null); S.map=null; history.replaceState(null,'','?'); $('#drawTools').hidden=true; renderMapsList(); if(window.innerWidth<=760) $('#panel').classList.add('open'); };
+
+async function boot(){
+  if(EMBED) $('#app').classList.add('embed');
+  S.user = await store.getUser().catch(()=>null);
+  renderUser();
+  const id=qs.get('map');
+  if(id) await openMap(id); else { $('#drawTools').hidden=true; await renderMapsList(); if(window.innerWidth<=760 && !EMBED) $('#panel').classList.add('open'); }
+}
+initMap();
+boot().catch(err);
+if(!DEMO){ store.sb.auth.onAuthStateChange((ev, session)=>{ const em=(session?.user?.email||'').toLowerCase(); if((ev==='SIGNED_IN'||ev==='SIGNED_OUT') && em!==(S.user?.email||'')) boot().catch(err); }); }
+})();
+</script>
+</body>
+</html>
