@@ -144,6 +144,20 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;z-index:60;box-shadow:var(--shadow)}
 
 
+/* Dra og slipp */
+.dropzone{display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center;border:2px dashed var(--line);border-radius:8px;padding:22px 14px;cursor:pointer;background:var(--bg);transition:border-color .15s,background .15s}
+.dropzone:hover,.dropzone.over{border-color:var(--sea);background:var(--sea-soft)}
+.dropzone svg,.dropoverlay svg{width:30px;height:30px;stroke:var(--sea);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.dropzone b{font-size:14px}.dropzone span{color:var(--muted);font-size:12px}.dropzone small{color:var(--muted);font-size:11px;margin-top:6px;line-height:1.4}
+.optgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.optgrid .btn{justify-content:center}
+.dropoverlay{position:absolute;inset:8px;z-index:30;border:3px dashed var(--sea);border-radius:10px;background:rgba(31,138,138,.14);display:flex;align-items:center;justify-content:center;pointer-events:none}
+.dropoverlay > div{background:var(--panel);border-radius:8px;box-shadow:var(--shadow);padding:16px 20px;display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.dropoverlay span{color:var(--muted);font-size:12px}
+.droptip{margin-top:12px;padding-top:10px;border-top:1px dashed var(--line)}
+.rlegend{align-items:center}.rlegend .bar{display:inline-block;width:110px;height:8px;border-radius:2px;margin:0 6px}
+.toast.busy{bottom:64px}
+
 /* OpenLayers – nødvendig CSS (inlinet) */
 .ol-viewport{position:relative;overflow:hidden;width:100%;height:100%;touch-action:none}
 .ol-viewport canvas{display:block}
@@ -226,6 +240,7 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
     <div class="modehint" id="modehint" hidden></div>
     <div class="statusbar"><span id="coords">—</span><span class="crsbadge" id="crsbadge">—</span></div>
     <div id="popup" class="popup" hidden></div>
+    <div class="dropoverlay" id="dropOverlay" hidden><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><b>Slipp filene for å legge dem til som lag</b><span>GeoJSON · KML/KMZ · GPX · Shapefil · CSV/Excel · GeoTIFF</span></div></div>
     <div class="embedbadge" id="embedbadge" hidden></div>
     <button class="btn primary panel-toggle" id="panelToggle">Lag og info</button>
   </div>
@@ -253,6 +268,7 @@ const CATALOG = [
   {name:'Akvakultur – lokaliteter (Fiskeridirektoratet)', kind:'wms', source:{url:'https://gis.fiskeridir.no/server/services/fiskeridirWMS_akva/MapServer/WMSServer', layers:'akvakultur_lokaliteter', version:'1.3.0'}},
   {name:'Akvakultur – flater (Fiskeridirektoratet)', kind:'wms', source:{url:'https://gis.fiskeridir.no/server/services/fiskeridirWMS_akva/MapServer/WMSServer', layers:'akvakultur_flater', version:'1.3.0'}},
   {name:'Mareano – bunnsedimenter (NGU)', kind:'wms', source:{url:'https://geo.ngu.no/mapserver/MarineBunnsedimenterWMS', layers:'Bunnsedimenter_kornstorrelse_detaljert', version:'1.3.0'}},
+  {name:'Batymetri – EMODnet (Europa, inkl. Færøyane og Skottland)', kind:'wms', source:{url:'https://ows.emodnet-bathymetry.eu/wms', layers:'emodnet:mean_multicolour', version:'1.3.0', projections:['EPSG:3857','EPSG:25833']}},
   {name:'Flyfoto – Norge i bilder (Kartverket)', kind:'wms', source:{url:'https://wms.geonorge.no/skwms1/wms.nib', layers:'ortofoto', version:'1.3.0'}},
 ];
 const TILSTAND = {1:'#2e8b57', 2:'#8bc34a', 3:'#d99a1f', 4:'#c84b3a'};
@@ -323,6 +339,9 @@ class DemoStore {
   async listAccess(mapId){ return this.d.access.filter(a=>a.map_id===mapId); }
   async setAccess(mapId,email,role){ this.d.access=this.d.access.filter(a=>!(a.map_id===mapId&&a.email===email)); this.d.access.push({map_id:mapId,email,role}); }
   async removeAccess(mapId,email){ this.d.access=this.d.access.filter(a=>!(a.map_id===mapId&&a.email===email)); }
+  async uploadFile(path, blob){ this.files = this.files||{}; this.files[path]=URL.createObjectURL(blob); return path; }
+  async fileUrl(path){ return (this.files||{})[path] || path; }
+  async removeFiles(){}
   async mapBbox(mapId){ const ls=await this.listLayers(mapId); let b=null; for(const l of ls){ if(l.kind!=='vector') continue; const fc=await this.layerGeojson(l.id); b=bboxOf(fc,b);} return b; }
 }
 
@@ -355,6 +374,9 @@ class SupabaseStore {
   async setAccess(mapId,email,role){ return this._q(this.sb.from('kart_access').upsert({map_id:mapId,email:email.toLowerCase(),role})); }
   async removeAccess(mapId,email){ return this._q(this.sb.from('kart_access').delete().eq('map_id',mapId).eq('email',email)); }
   async mapBbox(mapId){ return this._q(this.sb.rpc('kart_map_bbox',{p_map:mapId})); }
+  async uploadFile(path, blob, type){ const {error}=await this.sb.storage.from('kart-filer').upload(path, blob, {contentType:type, upsert:true}); if(error) throw error; return path; }
+  async fileUrl(path){ const {data,error}=await this.sb.storage.from('kart-filer').createSignedUrl(path, 60*60*12); if(error) throw error; return data.signedUrl; }
+  async removeFiles(paths){ await this.sb.storage.from('kart-filer').remove(paths.filter(Boolean)); }
 }
 
 // ---- Geometri-hjelpere ---------------------------------------------------
@@ -371,20 +393,64 @@ function fmtArea(a){ return a>=1e6 ? (a/1e6).toFixed(3)+' km²' : a>=1e4 ? (a/1e
 const store = DEMO ? new DemoStore() : new SupabaseStore();
 const S = { user:null, map:null, layers:[], comments:[], access:[], tab:'layers', mode:null, draft:[], measure:[], activeLayerId:null, popup:null };
 
-// ---- Kart (OpenLayers, EUREF89 UTM 32/33) --------------------------------
-// Fast grunnlag for alle kart: Kartverket topografisk norgeskart via WMS (wms.geonorge.no/skwms1/wms.topo).
-// Kartet rendres i EPSG:25832 (UTM 32N) sør for CRS_SPLIT_LAT og EPSG:25833 (UTM 33N) nord for.
-// Gjeldende CRS vises alltid nederst til høyre.
+// ---- Kart (OpenLayers) – koordinatsystem per region ------------------------
+// Grunnlag: Kartverket topografisk norgeskart (WMS wms.topo) i Norge. Utenfor Norge (Færøyane, Skottland)
+// dekker ikke Kartverket, der brukes OpenStreetMap reprojisert til regionens offisielle CRS.
+// Regel (velges fra kartets senter, kan overstyres per kart):
+//   Sør-Norge  (sør for 65°N)                  EPSG:25832  EUREF89 UTM 32N
+//   Nord-Norge (65°N og nordover, vest for 22°Ø) EPSG:25833  EUREF89 UTM 33N
+//   Finnmark   (68°N og nordover, 22°Ø og østover) EPSG:25835  EUREF89 UTM 35N
+//   Færøyane                                    EPSG:5316   ETRS89 / Faroe TM (Umhvørvisstovan)
+//   Skottland / Storbritannia                   EPSG:27700  OSGB36 / British National Grid
+// Gjeldende CRS og kartgrunnlag vises alltid nederst til høyre.
 const TOPO_WMS = 'https://wms.geonorge.no/skwms1/wms.topo';
-const CRS_SPLIT_LAT = 65.0;   // ≈ fylkesgrensa Trøndelag/Nordland (nord for Rørvik). Kan overstyres per kart.
+const CRS_SPLIT_LAT = 65.0;      // ≈ fylkesgrensa Trøndelag/Nordland, like nord for Rørvik
+const FINNMARK_LON = 22.0;       // ≈ grensa Troms/Finnmark (Kvænangen/Loppa)
+const NOR_CRS = ['EPSG:25832','EPSG:25833','EPSG:25835'];
 const CRS = {
-  'EPSG:25832': {label:'EPSG:25832', name:'EUREF89 UTM sone 32N', def:'+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', extent:[-1877994.66, 3932281.56, 836715.5, 9440581.95]},
-  'EPSG:25833': {label:'EPSG:25833', name:'EUREF89 UTM sone 33N', def:'+proj=utm +zone=33 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', extent:[-2465144.80, 4102893.55, 776625.76, 9408555.22]},
+  'EPSG:25832': {label:'EPSG:25832', name:'EUREF89 UTM sone 32N', region:'Sør-Norge', base:'topo',
+    def:'+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', bbox:[-15,50,45,84]},
+  'EPSG:25833': {label:'EPSG:25833', name:'EUREF89 UTM sone 33N', region:'Nord-Norge', base:'topo',
+    def:'+proj=utm +zone=33 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', bbox:[-15,50,45,84]},
+  'EPSG:25835': {label:'EPSG:25835', name:'EUREF89 UTM sone 35N', region:'Finnmark', base:'topo',
+    def:'+proj=utm +zone=35 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', bbox:[-5,52,50,84]},
+  'EPSG:5316':  {label:'EPSG:5316',  name:'ETRS89 / Faroe TM', region:'Færøyane', base:'osm',
+    def:'+proj=tmerc +lat_0=0 +lon_0=-7 +k=0.999997 +x_0=200000 +y_0=-6000000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', bbox:[-14,58,0,66]},
+  'EPSG:27700': {label:'EPSG:27700', name:'OSGB36 / British National Grid', region:'Skottland', base:'osm',
+    // Datumskift med 7-parameter Helmert (±2–5 m). OSTN15-gridet kan ikke brukes i nettleseren.
+    def:'+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +towgs84=446.448,-125.157,542.06,0.15,0.247,0.842,-20.489 +units=m +no_defs', bbox:[-10,49,3,62]},
+};
+// Andre koordinatsystemer filer kan komme i (registreres ved behov)
+const EXTRA_DEFS = {
+  'EPSG:4258': '+proj=longlat +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +no_defs',
+  'EPSG:25829': '+proj=utm +zone=29 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs',
+  'EPSG:25830': '+proj=utm +zone=30 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs',
+  'EPSG:25831': '+proj=utm +zone=31 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs',
+  'EPSG:25834': '+proj=utm +zone=34 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs',
+  'EPSG:25836': '+proj=utm +zone=36 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs',
 };
 Object.entries(CRS).forEach(([k,v])=>proj4.defs(k, v.def));
+Object.entries(EXTRA_DEFS).forEach(([k,d])=>proj4.defs(k, d));
 ol.proj.proj4.register(proj4);
-Object.entries(CRS).forEach(([k,v])=>ol.proj.get(k).setExtent(v.extent));
-function crsForLat(lat){ return lat < CRS_SPLIT_LAT ? 'EPSG:25832' : 'EPSG:25833'; }
+Object.entries(CRS).forEach(([k,v])=>{ v.extent = ol.proj.transformExtent(v.bbox, 'EPSG:4326', k, 32); ol.proj.get(k).setExtent(v.extent); });
+// Sørger for at en EPSG-kode er kjent (UTM-soner registreres automatisk). Returnerer true hvis kjent.
+function ensureProjection(code){
+  if(!code) return false; code = 'EPSG:' + String(code).replace(/^.*?(\d{4,5})$/, '$1');
+  if(ol.proj.get(code)) return code;
+  const n = +code.split(':')[1]; let def=null;
+  if(n>=25828 && n<=25838) def=`+proj=utm +zone=${n-25800} +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+  else if(n>=32601 && n<=32660) def=`+proj=utm +zone=${n-32600} +datum=WGS84 +units=m +no_defs`;
+  else if(n>=23028 && n<=23038) def=`+proj=utm +zone=${n-23000} +ellps=intl +towgs84=-87,-98,-121,0,0,0,0 +units=m +no_defs`;
+  if(!def) return false;
+  proj4.defs(code, def); ol.proj.proj4.register(proj4); return code;
+}
+function crsFor(lon, lat){
+  if(lon>=-8.5 && lon<=-5.5 && lat>=61.2 && lat<=62.6) return 'EPSG:5316';           // Færøyane
+  if(lon>=-9.5 && lon<=2.0 && lat>=49.5 && lat<=61.2) return 'EPSG:27700';            // Skottland/Storbritannia
+  if(lat>=68.0 && lon>=FINNMARK_LON) return 'EPSG:25835';                             // Finnmark
+  return lat < CRS_SPLIT_LAT ? 'EPSG:25832' : 'EPSG:25833';                           // Sør- / Nord-Norge
+}
+const NORWAY_BBOX = [4.0, 57.8, 31.3, 71.3];
 
 const { Map:OLMap, View, Overlay, Feature } = ol;
 const { Tile:TileLayer, Vector:VectorLayer } = ol.layer;
@@ -397,14 +463,17 @@ let map, view, VIEW_CRS = 'EPSG:25833';
 let topoLayer, draftSource, draftLayer, commentSource, commentLayer, popupOverlay, drawInteraction=null;
 const hoverBound = new Set();
 
+// WMS hentes i kartets CRS når tjenesten støtter det (norske UTM-soner), ellers i EPSG:3857 og reprojiseres.
 function wmsLayer(url, layers, opts={}){
+  const supported = opts.projections || NOR_CRS;
+  const proj = supported.includes(VIEW_CRS) ? VIEW_CRS : 'EPSG:3857';
   return new TileLayer({ opacity: opts.opacity ?? 1, zIndex: opts.zIndex ?? 0, source: new TileWMS({
     url, params:{ LAYERS: layers, VERSION: opts.version||'1.3.0', FORMAT: opts.format||'image/png', TRANSPARENT: opts.transparent ?? true, TILED:true },
-    projection: VIEW_CRS, serverType: opts.serverType, crossOrigin:'anonymous', attributions: opts.attrib }) });
+    projection: proj, serverType: opts.serverType, crossOrigin:'anonymous', attributions: opts.attrib }) });
 }
 function xyzLayer(tiles, opts={}){
-  // XYZ-fliser er Web Mercator; OL reprojiserer dem til UTM (litt uskarpt, men brukbart som overlegg)
-  return new TileLayer({ opacity: opts.opacity ?? 1, zIndex: opts.zIndex ?? 0, source: new ol.source.XYZ({ url: tiles[0], crossOrigin:'anonymous', projection:'EPSG:3857' }) });
+  // XYZ-fliser er Web Mercator; OL reprojiserer dem til kartets CRS
+  return new TileLayer({ opacity: opts.opacity ?? 1, zIndex: opts.zIndex ?? 0, source: new ol.source.XYZ({ url: tiles[0], crossOrigin:'anonymous', projection:'EPSG:3857', maxZoom: opts.maxZoom ?? 19 }) });
 }
 function draftStyle(f){
   const g=f.getGeometry().getType();
@@ -433,24 +502,28 @@ function initMap(){
   popupOverlay = new Overlay({ element:$('#popup'), positioning:'bottom-center', offset:[0,-6], stopEvent:true, autoPan:{animation:{duration:200}} });
   map = new OLMap({ target:'map', layers:[draftLayer, commentLayer], overlays:[popupOverlay], controls:[new ol.control.ScaleLine({units:'metric'})],
     view: new View({ projection:VIEW_CRS, center: fromLonLat([14.5,66.5], VIEW_CRS), zoom:6, maxZoom:20, constrainResolution:false }) });
-  setViewCrs(VIEW_CRS, [14.5,66.5], 6);
+  setViewCrs(VIEW_CRS, [17,65], 5, NORWAY_BBOX);
   map.on('pointermove', e => { if(e.dragging) return; const [x,y]=e.coordinate; $('#coords').textContent = fmtCoord(x,y); const hit = !S.mode && map.hasFeatureAtPixel(e.pixel, {layerFilter: l=>l!==draftLayer}); map.getTargetElement().style.cursor = hit?'pointer':''; });
   map.on('singleclick', onMapClick);
   $('#zoomIn').onclick = () => view.animate({zoom:view.getZoom()+1, duration:200}); $('#zoomOut').onclick = () => view.animate({zoom:view.getZoom()-1, duration:200}); $('#zoomFit').onclick = fitToData;
   $('#popup').addEventListener('click', e=>{ if(e.target.classList.contains('close')) closePopup(); });
 }
 // Bytter prosjeksjon: ny View + nytt topo-grunnlag. Alle faglag tegnes på nytt i ny CRS.
-function setViewCrs(crs, centerLonLat, zoom){
+function setViewCrs(crs, centerLonLat, zoom, fitExtent){
   VIEW_CRS = crs;
   const c = CRS[crs];
   if(topoLayer) map.removeLayer(topoLayer);
-  topoLayer = wmsLayer(TOPO_WMS, 'topo', {zIndex:0, transparent:false, format:'image/png', attrib:'© Kartverket'});
+  topoLayer = c.base==='topo'
+    ? wmsLayer(TOPO_WMS, 'topo', {zIndex:0, transparent:false, format:'image/png', attrib:'© Kartverket'})
+    : xyzLayer(['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], {zIndex:0, maxZoom:19});
   map.addLayer(topoLayer);
   view = new View({ projection:crs, extent: c.extent, center: fromLonLat(centerLonLat, crs), zoom: zoom ?? 12, maxZoom:20 });
   map.setView(view);
+  if(fitExtent) view.fit(transformExtent(fitExtent,'EPSG:4326',crs,16), {padding:[20,20,20,20]});
   view.on('change:center', saveView); view.on('change:resolution', saveView);
-  $('#crsbadge').innerHTML = `<b>${c.label}</b> · ${c.name}`;
-  $('#crsbadge').title = 'Kartet og koordinatene vises i ' + c.name;
+  const baseName = c.base==='topo' ? 'Kartverket topo' : 'OpenStreetMap';
+  $('#crsbadge').innerHTML = `<b>${c.label}</b> · ${c.name} · ${baseName}`;
+  $('#crsbadge').title = `${c.region}: kartet og koordinatene vises i ${c.name}. Grunnlag: ${c.base==='topo'?'© Kartverket':'© OpenStreetMap-bidragsytere'}`;
 }
 function fmtCoord(x,y){ return `N ${Math.round(y).toLocaleString('nb-NO')}  E ${Math.round(x).toLocaleString('nb-NO')}`; }
 function readFC(fc){ return GeoJSONFmt.readFeatures(fc, {dataProjection:'EPSG:4326', featureProjection:VIEW_CRS}); }
@@ -464,8 +537,13 @@ async function renderLayer(l){
     const src = new VectorSource({features: readFC(fc)});
     src.getFeatures().forEach(f=>f.set('_layer', l.id, true));
     l._ol = new VectorLayer({source:src, style:layerStyleFn(l), zIndex:z, visible:l.visible!==false});
+  } else if(l.kind==='raster'){
+    const s=l.source; ensureProjection(s.projection);
+    const url = await store.fileUrl(s.png);
+    l._ol = new ol.layer.Image({ zIndex:z, opacity:l.style?.opacity ?? .9, visible:l.visible!==false,
+      source:new ol.source.ImageStatic({ url, imageExtent:s.extent, projection:s.projection, crossOrigin:'anonymous', interpolate:true }) });
   } else if(l.kind==='wms'){
-    const s=l.source; l._ol = wmsLayer(s.url, s.layers, {version:s.version, format:s.format, opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
+    const s=l.source; l._ol = wmsLayer(s.url, s.layers, {version:s.version, format:s.format, projections:s.projections, opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
   } else {
     l._ol = xyzLayer(l.source.tiles || [l.source.url], {opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
   }
@@ -476,7 +554,7 @@ function renderComments(){
   commentSource.clear();
   S.comments.forEach(c=>{ const f=new Feature({geometry:new ol.geom.Point(fromLonLat([c.lng,c.lat], VIEW_CRS)), id:c.id, resolved:!!c.resolved}); commentSource.addFeature(f); });
 }
-function layerExtent(l){ if(!l._ol || l.kind!=='vector') return null; const e=l._ol.getSource().getExtent(); return (e && isFinite(e[0]))? e : null; }
+function layerExtent(l){ if(l.kind==='raster' && l.source?.extent){ ensureProjection(l.source.projection); return transformExtent(l.source.extent, l.source.projection, VIEW_CRS, 8); } if(!l._ol || l.kind!=='vector') return null; const e=l._ol.getSource().getExtent(); return (e && isFinite(e[0]))? e : null; }
 async function fitToData(){
   if(!S.map) return;
   let ext=null; S.layers.forEach(l=>{ const e=layerExtent(l); if(e){ ext = ext? ol.extent.extend(ext,e) : e.slice(); } });
@@ -596,19 +674,21 @@ function renderPanel(){
   $('#panelActions').innerHTML = (t==='layers'&&canEdit())?'<button class="btn small" id="addLayer">+ Legg til lag</button>':'';
   if(t==='layers'){
     const rows=[...S.layers].sort((a,b)=>b.sort_order-a.sort_order).map(l=>{
-      const st=l.style||{}; const n = l.kind==='vector' ? (l._fc?l._fc.features.length+' objekter':'…') : l.kind.toUpperCase();
-      let legend=''; if(st.colorBy&&st.colorBy.map){ legend='<div class="legend">'+Object.entries(st.colorBy.map).map(([k,v])=>`<span><i style="background:${v}"></i>${esc(st.colorBy.legend?.[k]||k)}</span>`).join('')+'</div>'; }
+      const st=l.style||{}; const n = l.kind==='vector' ? (l._fc?l._fc.features.length+' objekter':'…') : l.kind==='raster' ? `GeoTIFF · ${esc(l.source?.projection||'')}` : l.kind.toUpperCase();
+      let legend=''; const lg=l.kind==='raster'&&l.source?.legend; if(lg){ const ramp=lg.ramp==='depth'?RAMP_DEPTH:RAMP_TERRAIN; const grad=`linear-gradient(90deg,${ramp.map(([t,c])=>c+' '+Math.round(t*100)+'%').join(',')})`; const f=v=>Math.abs(v)>=100?Math.round(v):(+v).toFixed(1); legend=`<div class="legend rlegend"><span class="mono">${f(lg.ramp==='depth'?lg.max:lg.min)}</span><i class="bar" style="background:${grad}"></i><span class="mono">${f(lg.ramp==='depth'?lg.min:lg.max)} ${lg.ramp==='depth'?'m':''}</span></div>`; }
+      if(st.colorBy&&st.colorBy.map){ legend='<div class="legend">'+Object.entries(st.colorBy.map).map(([k,v])=>`<span><i style="background:${v}"></i>${esc(st.colorBy.legend?.[k]||k)}</span>`).join('')+'</div>'; }
       return `<div class="layer${S.activeLayerId===l.id?' active':''}" data-id="${l.id}">
         <input type="checkbox" ${l.visible?'checked':''} title="Vis/skjul" data-act="vis">
         <div><div class="name" title="${esc(l.name)}">${esc(l.name)}${S.activeLayerId===l.id&&canEdit()?'<span class="pill">tegner hit</span>':''}</div><div class="meta">${n}</div></div>
-        <div class="acts"><button class="iconbtn" data-act="zoom" title="Zoom til lag">${ICON.target}</button>${canEdit()?`<button class="iconbtn" data-act="edit" title="Innstillinger">${ICON.gear}</button>`:''}${l.kind==='vector'?`<button class="iconbtn" data-act="dl" title="Last ned GeoJSON">${ICON.down}</button>`:''}</div>
+        <div class="acts"><button class="iconbtn" data-act="zoom" title="Zoom til lag">${ICON.target}</button>${canEdit()?`<button class="iconbtn" data-act="edit" title="Innstillinger">${ICON.gear}</button>`:''}${l.kind==='vector'?`<button class="iconbtn" data-act="dl" title="Last ned GeoJSON">${ICON.down}</button>`:l.kind==='raster'&&l.source?.tif?`<button class="iconbtn" data-act="dltif" title="Last ned original GeoTIFF">${ICON.down}</button>`:''}</div>
         ${legend}</div>`; }).join('');
-    body.innerHTML = rows || '<div class="hint">Ingen lag ennå. Legg til et lag eller last opp GeoJSON.</div>';
+    body.innerHTML = (rows || '<div class="hint">Ingen lag ennå.</div>') + (canEdit()?'<div class="hint droptip">Tips: dra og slipp filer rett inn i kartet for å legge dem til som lag.</div>':'');
     body.querySelectorAll('.layer').forEach(row=>{ const l=S.layers.find(x=>x.id===row.dataset.id);
       row.querySelector('[data-act=vis]').onchange=async e=>{ l.visible=e.target.checked; if(l._ol) l._ol.setVisible(l.visible); if(canEdit()) store.updateLayer(l.id,{visible:l.visible}).catch(err); };
       row.querySelector('[data-act=zoom]').onclick=()=>{ const e=layerExtent(l); if(e) view.fit(e,{padding:[60,60,60,60],duration:400,maxZoom:17}); };
       const ed=row.querySelector('[data-act=edit]'); if(ed) ed.onclick=()=>layerSettings(l);
       const dl=row.querySelector('[data-act=dl]'); if(dl) dl.onclick=()=>download(`${l.name.replace(/[^\w\-æøåÆØÅ ]/g,'_')}.geojson`, JSON.stringify(l._fc||{type:'FeatureCollection',features:[]}));
+      const dt=row.querySelector('[data-act=dltif]'); if(dt) dt.onclick=async()=>{ try{ window.open(await store.fileUrl(l.source.tif),'_blank','noopener'); }catch(e){ err(e); } };
       row.querySelector('.name').onclick=()=>{ if(canEdit()&&l.kind==='vector'){ S.activeLayerId=l.id; renderPanel(); } };
     });
     const al=$('#addLayer'); if(al) al.onclick=addLayerDialog;
@@ -627,7 +707,7 @@ function renderPanel(){
       ${canEdit()?`<div class="section"><h3>Tilgang per e-post</h3><div id="accessList">${S.access.map(a=>`<div class="access"><span>${esc(a.email)} <span class="pill">${a.role==='editor'?'redigerer':'leser'}</span></span><button class="iconbtn" data-email="${esc(a.email)}" title="Fjern">${ICON.trash}</button></div>`).join('')||'<div class="hint">Ingen eksterne. Ansatte (@'+esc(CFG.staffDomain||'aspecto.no')+') har alltid tilgang.</div>'}</div>
         <div class="row" style="margin-top:8px"><input id="accEmail" placeholder="kunde@firma.no" type="email" style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><select id="accRole" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><option value="viewer">Leser</option><option value="editor">Redigerer</option></select><button class="btn small" id="accAdd">Legg til</button></div>
         <div class="hint" style="margin-top:6px">Personen må også være invitert som gjest i Aspectos Microsoft-tenant for å kunne logge inn (MFA håndheves der).</div></div>
-      <div class="section"><h3>Koordinatsystem</h3><div class="row"><select id="crsSel" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)">${Object.entries(CRS).map(([k,v])=>`<option value="${k}" ${k===VIEW_CRS?'selected':''}>${v.label} – ${v.name}</option>`).join('')}</select></div><div class="hint" style="margin-top:6px">Standard: UTM 32 sør for ${CRS_SPLIT_LAT}°N, UTM 33 nord for. Grunnlaget er alltid Kartverket topografisk norgeskart.</div></div>
+      <div class="section"><h3>Koordinatsystem</h3><div class="row"><select id="crsSel" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)">${Object.entries(CRS).map(([k,v])=>`<option value="${k}" ${k===VIEW_CRS?'selected':''}>${v.region}: ${v.label} – ${v.name}</option>`).join('')}</select></div><div class="hint" style="margin-top:6px">Standard velges fra kartets senter: UTM 32 sør for ${CRS_SPLIT_LAT}°N, UTM 33 nord for, UTM 35 i Finnmark, Faroe TM på Færøyane og British National Grid i Skottland. Grunnlag: Kartverket topo i Norge, OpenStreetMap utenfor.</div></div>
       <div class="section"><h3>Kart</h3><div class="row"><button class="btn small" id="editMeta">Rediger tittel/beskrivelse</button><button class="btn small danger" id="delMap">Slett kart</button></div></div>`:''}`;
     $('#copyLink').onclick=()=>copy(link); $('#copyEmbed').onclick=()=>copy(embed);
     const ip=$('#isPublic'); if(ip) ip.onchange=async()=>{ S.map.is_public=ip.checked; await store.updateMap(S.map.id,{is_public:ip.checked}); toast(ip.checked?'Kartet er nå offentlig':'Kartet er nå privat'); };
@@ -639,17 +719,39 @@ function renderPanel(){
   }
 }
 async function addLayerDialog(){
-  const kind = await dialog({title:'Legg til lag', fields:[{k:'kind',label:'Type',type:'select',value:'file',options:[['file','Last opp GeoJSON-fil'],['empty','Tomt lag (for tegning)'],['catalog','Fra katalog (Fiskeridirektoratet, Kartverket, NGU)'],['wms','Egen WMS-tjeneste'],['xyz','Egne rasterfliser (XYZ)']]}], ok:'Neste'});
-  if(!kind) return;
+  const choice = await new Promise(res=>{
+    const host=$('#dialogHost');
+    host.innerHTML=`<div class="dialog" role="dialog" aria-modal="true"><div class="box">
+      <h3>Legg til lag</h3>
+      <label class="dropzone" id="dz" for="dzFile">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>
+        <b>Dra og slipp filer her</b><span>eller klikk for å velge</span>
+        <small>GeoJSON · KML/KMZ · GPX · Shapefil (zip eller .shp/.dbf/.prj) · CSV/Excel med koordinater · GeoTIFF</small>
+        <input type="file" id="dzFile" multiple hidden>
+      </label>
+      <div class="hint" style="margin:10px 0 6px">AGIS tolker formatet og koordinatsystemet selv, og spør hvis noe er uklart.</div>
+      <div class="optgrid">
+        <button type="button" class="btn" data-k="catalog">Fra katalog</button>
+        <button type="button" class="btn" data-k="empty">Tomt lag for tegning</button>
+        <button type="button" class="btn" data-k="wms">Egen WMS</button>
+        <button type="button" class="btn" data-k="xyz">Rasterfliser (XYZ)</button>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><button type="button" class="btn" id="dlgCancel">Avbryt</button></div>
+    </div></div>`;
+    const close=v=>{ host.innerHTML=''; res(v); };
+    const dz=host.querySelector('#dz');
+    ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.add('over'); }));
+    dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
+    dz.addEventListener('drop',e=>{ e.preventDefault(); e.stopPropagation(); close({files:e.dataTransfer.files}); });
+    host.querySelector('#dzFile').onchange=e=>close({files:e.target.files});
+    host.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>close({kind:b.dataset.k}));
+    host.querySelector('#dlgCancel').onclick=()=>close(null);
+    host.querySelector('.dialog').onclick=e=>{ if(e.target.classList.contains('dialog')) close(null); };
+  });
+  if(!choice) return;
+  if(choice.files) return importFiles(choice.files);
+  const kind={kind:choice.kind};
   const order=S.layers.length;
-  if(kind.kind==='file'){
-    const inp=document.createElement('input'); inp.type='file'; inp.accept='.json,.geojson,application/geo+json,application/json';
-    inp.onchange=async()=>{ const f=inp.files[0]; if(!f) return; let fc; try{ fc=JSON.parse(await f.text()); }catch(e){ toast('Filen er ikke gyldig JSON'); return; }
-      if(fc.type==='Feature') fc={type:'FeatureCollection',features:[fc]}; if(fc.type!=='FeatureCollection'){ toast('Forventet GeoJSON FeatureCollection'); return; }
-      const l=await store.createLayer(S.map.id,{name:f.name.replace(/\.(geo)?json$/i,''), kind:'vector', style:{color:randomColor(), fillOpacity:.25, width:2, radius:6}, sort_order:order});
-      const n=await store.importGeojson(l.id, fc); l._fc=await store.layerGeojson(l.id); S.layers.push(l); S.activeLayerId=l.id; await renderLayer(l); renderPanel(); fitToData(); toast(`${n} objekter importert`); };
-    inp.click(); return;
-  }
   if(kind.kind==='empty'){ const r=await dialog({title:'Nytt lag',fields:[{k:'name',label:'Navn',value:'Nytt lag'}],ok:'Opprett'}); if(!r) return; const l=await store.createLayer(S.map.id,{name:r.name,kind:'vector',style:{color:randomColor(),fillOpacity:.25,width:2,radius:6},sort_order:order}); l._fc={type:'FeatureCollection',features:[]}; S.layers.push(l); S.activeLayerId=l.id; await renderLayer(l); renderPanel(); return; }
   if(kind.kind==='catalog'){ const r=await dialog({title:'Velg faglag',fields:[{k:'i',label:'Lag',type:'select',value:'0',options:CATALOG.map((c,i)=>[String(i),c.name])}],ok:'Legg til'}); if(!r) return; const c=CATALOG[+r.i]; const l=await store.createLayer(S.map.id,{name:c.name,kind:c.kind,source:c.source,style:{opacity:.85},sort_order:order}); S.layers.push(l); await renderLayer(l); renderPanel(); return; }
   if(kind.kind==='wms'){ const r=await dialog({title:'WMS-lag',fields:[{k:'name',label:'Navn',value:''},{k:'url',label:'WMS-URL (GetCapabilities-adressen uten parametre)',value:''},{k:'layers',label:'Lagnavn (LAYERS)',value:''},{k:'version',label:'Versjon',type:'select',value:'1.3.0',options:[['1.3.0','1.3.0'],['1.1.1','1.1.1']]}],ok:'Legg til'}); if(!r||!r.url) return; const l=await store.createLayer(S.map.id,{name:r.name||r.layers,kind:'wms',source:{url:r.url,layers:r.layers,version:r.version},style:{opacity:.85},sort_order:order}); S.layers.push(l); await renderLayer(l); renderPanel(); return; }
@@ -661,12 +763,356 @@ async function layerSettings(l){
   if(l.kind==='vector'){ fields.push({k:'color',label:'Farge',type:'color',value:st.color||'#1f8a8a'},{k:'fillOpacity',label:'Fyll-gjennomsiktighet (0–1)',value:st.fillOpacity??.25},{k:'width',label:'Linjebredde',value:st.width??2},{k:'radius',label:'Punktstørrelse',value:st.radius??6},{k:'colorProp',label:'Fargelegg etter attributt (valgfritt, f.eks. tilstand)',value:st.colorBy?.prop||''}); }
   else fields.push({k:'opacity',label:'Gjennomsiktighet (0–1)',value:st.opacity??.85});
   const r=await dialog({title:'Laginnstillinger',fields,ok:'Lagre',extra:'<button class="btn small danger" id="dlgDelete">Slett lag</button>'});
-  if(r==='__delete'){ await store.deleteLayer(l.id); removeLayerFromMap(l); S.layers=S.layers.filter(x=>x.id!==l.id); renderPanel(); toast('Lag slettet'); return; }
+  if(r==='__delete'){ if(l.kind==='raster') store.removeFiles([l.source?.png, l.source?.tif]).catch(()=>{}); await store.deleteLayer(l.id); removeLayerFromMap(l); S.layers=S.layers.filter(x=>x.id!==l.id); renderPanel(); toast('Lag slettet'); return; }
   if(!r) return;
   const style = l.kind==='vector' ? {...st, color:r.color, fillOpacity:+r.fillOpacity, width:+r.width, radius:+r.radius, colorBy: r.colorProp ? (r.colorProp==='tilstand'?{prop:'tilstand',map:TILSTAND,legend:{1:'Tilstand 1',2:'Tilstand 2',3:'Tilstand 3',4:'Tilstand 4'}}:{prop:r.colorProp}) : undefined} : {...st, opacity:+r.opacity};
   if(style.colorBy===undefined) delete style.colorBy;
   Object.assign(l, await store.updateLayer(l.id,{name:r.name, style}), {_fc:l._fc});
   await renderLayer(l); renderPanel();
+}
+
+// ---- Import av filer (dra og slipp / velg filer) ---------------------------
+// Tolker filtypen selv og spør i popup bare når noe er uklart (ukjent format, manglende koordinatsystem,
+// usikre kolonner i CSV/Excel). Alle vektordata lagres som WGS84 i databasen.
+const LIBS = {
+  jszip:  'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js',
+  shp:    'https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js',
+  geotiff:'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js',
+  xlsx:   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+};
+const _libs = {};
+function loadLib(name, globalName){
+  if(window[globalName]) return Promise.resolve(window[globalName]);
+  if(!_libs[name]) _libs[name] = new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=LIBS[name]; s.onload=()=>res(window[globalName]); s.onerror=()=>rej(new Error('Klarte ikke å laste '+name)); document.head.appendChild(s); });
+  return _libs[name];
+}
+const FORMAT_LABEL = { geojson:'GeoJSON', kml:'KML', kmz:'KMZ (Google Earth)', gpx:'GPX', shapezip:'Shapefile (zip)', shapeparts:'Shapefile', csv:'CSV/tekst med koordinater', xlsx:'Excel med koordinater', raster:'GeoTIFF (raster)' };
+const ext = n => (n.toLowerCase().match(/\.([a-z0-9]+)$/)||[])[1]||'';
+const baseName = n => n.replace(/\.[^.]+$/, '');
+
+// Kandidat-CRS brukeren kan velge når filen ikke sier det selv
+function crsChoices(){
+  return [['EPSG:4326','WGS84 grader (lengde/bredde)'], ...Object.entries(CRS).map(([k,v])=>[k, `${v.region}: ${v.label} – ${v.name}`]),
+    ['EPSG:25834','EUREF89 UTM sone 34N'], ['EPSG:25831','EUREF89 UTM sone 31N'], ['EPSG:25830','EUREF89 UTM sone 30N'], ['EPSG:25829','EUREF89 UTM sone 29N'],
+    ['EPSG:32632','WGS84 UTM 32N'], ['EPSG:32633','WGS84 UTM 33N'], ['EPSG:32635','WGS84 UTM 35N'], ['EPSG:23032','ED50 UTM 32N'], ['EPSG:23033','ED50 UTM 33N']];
+}
+// Gjetter projisert CRS ut fra koordinatverdier (x=øst, y=nord)
+function guessProjected(xs, ys){
+  const mx = median(xs), my = median(ys);
+  if(my>6.3e6 && my<8.1e6 && mx>-2e5 && mx<1.3e6){
+    // Norske UTM-koordinater: bruk kartets sone om den er norsk, ellers 33
+    return NOR_CRS.includes(VIEW_CRS) ? VIEW_CRS : 'EPSG:25833';
+  }
+  if(mx>100000 && mx<300000 && my>700000 && my<1000000) return 'EPSG:5316';
+  if(mx>0 && mx<700000 && my>0 && my<1300000) return 'EPSG:27700';
+  return VIEW_CRS;
+}
+function median(a){ const b=a.filter(Number.isFinite).sort((x,y)=>x-y); return b.length? b[Math.floor(b.length/2)] : NaN; }
+function looksGeographic(xs, ys){ const ok=(v,l)=>Number.isFinite(v)&&Math.abs(v)<=l; return xs.length && xs.every(v=>ok(v,180)) && ys.every(v=>ok(v,90)); }
+function sampleCoords(fc, n=200){
+  const xs=[], ys=[];
+  const walk=c=>{ if(xs.length>=n) return; if(typeof c[0]==='number'){ xs.push(c[0]); ys.push(c[1]); } else c.forEach(walk); };
+  (fc.features||[]).forEach(f=>{ if(f.geometry&&f.geometry.coordinates) walk(f.geometry.coordinates); });
+  return {xs, ys};
+}
+function reprojectFC(fc, from){
+  if(!from || from==='EPSG:4326' || from==='EPSG:4258') return fc;
+  const t = proj4(from, 'EPSG:4326');
+  const walk=c=> typeof c[0]==='number' ? t.forward([c[0],c[1]]).map(v=>+v.toFixed(7)) : c.map(walk);
+  fc.features.forEach(f=>{ if(f.geometry&&f.geometry.coordinates) f.geometry.coordinates = walk(f.geometry.coordinates); });
+  return fc;
+}
+function crsFromGeoJSON(fc){
+  const name = fc.crs && fc.crs.properties && fc.crs.properties.name; if(!name) return null;
+  if(/CRS84|4326/.test(name)) return 'EPSG:4326';
+  const m = String(name).match(/EPSG:{1,2}(\d{4,5})/i); return m ? ensureProjection(m[1]) || ('EPSG:'+m[1]) : null;
+}
+// Spør om koordinatsystem når filen ikke oppgir det og verdiene ikke er grader
+async function resolveCrs(fc, fileName, known){
+  if(known && known!=='EPSG:4326' && !ensureProjection(known)){
+    const r = await dialog({title:'Ukjent koordinatsystem', text:`«${fileName}» oppgir ${known}, som AGIS ikke kjenner. Velg riktig system:`, fields:[{k:'crs',label:'Koordinatsystem',type:'select',value:'EPSG:25833',options:crsChoices()}], ok:'Importer'});
+    return r ? r.crs : null;
+  }
+  if(known) return known;
+  const {xs, ys} = sampleCoords(fc);
+  if(!xs.length) return 'EPSG:4326';
+  if(looksGeographic(xs, ys)) return 'EPSG:4326';
+  const guess = guessProjected(xs, ys);
+  const r = await dialog({title:'Hvilket koordinatsystem?', text:`«${fileName}» har projiserte koordinater (f.eks. Ø ${Math.round(median(xs)).toLocaleString('nb-NO')}, N ${Math.round(median(ys)).toLocaleString('nb-NO')}) uten oppgitt koordinatsystem. Forslaget er basert på verdiene – bekreft eller velg riktig:`,
+    fields:[{k:'crs',label:'Koordinatsystem',type:'select',value:guess,options:crsChoices()}], ok:'Importer'});
+  return r ? r.crs : null;
+}
+
+// --- Gjenkjenning -----------------------------------------------------------
+async function sniff(file){
+  const e = ext(file.name);
+  const map = {geojson:'geojson', json:'geojson', kml:'kml', kmz:'kmz', gpx:'gpx', csv:'csv', txt:'csv', tsv:'csv', xyz:'csv', xlsx:'xlsx', xls:'xlsx', tif:'raster', tiff:'raster', shp:'shapeparts', dbf:'shapeparts', prj:'shapeparts', cpg:'shapeparts', shx:'shapeparts'};
+  if(e==='zip'){
+    const JSZip = await loadLib('jszip','JSZip'); const z = await JSZip.loadAsync(await file.arrayBuffer());
+    const names = Object.keys(z.files).map(n=>n.toLowerCase());
+    if(names.some(n=>n.endsWith('.shp'))) return 'shapezip';
+    if(names.some(n=>n.endsWith('.kml'))) return 'kmz';
+    if(names.some(n=>/\.(geo)?json$/.test(n))) return 'zipgeojson';
+    return null;
+  }
+  if(map[e]) return map[e];
+  const head = new Uint8Array(await file.slice(0, 512).arrayBuffer());
+  const txt = new TextDecoder().decode(head).trim();
+  if(head[0]===0x49&&head[1]===0x49&&head[2]===0x2a || head[0]===0x4d&&head[1]===0x4d&&head[3]===0x2a) return 'raster';
+  if(head[0]===0x50&&head[1]===0x4b) return 'kmz';
+  if(txt.startsWith('{')) return 'geojson';
+  if(/<kml/i.test(txt)) return 'kml';
+  if(/<gpx/i.test(txt)) return 'gpx';
+  if(/^[^\n]*[;,\t][^\n]*\n/.test(txt)) return 'csv';
+  return null;
+}
+
+// --- Lesere (returnerer [{name, fc, crs}] eller [{name, raster}]) --------------
+async function readGeoJSON(file){
+  let fc; try{ fc = JSON.parse(await file.text()); }catch(e){ throw new Error(`«${file.name}» er ikke gyldig JSON`); }
+  if(fc.type==='Feature') fc={type:'FeatureCollection',features:[fc]};
+  else if(fc.type && fc.type!=='FeatureCollection') fc={type:'FeatureCollection',features:[{type:'Feature',geometry:fc,properties:{}}]};
+  if(!Array.isArray(fc.features)) throw new Error(`«${file.name}» er JSON, men ikke GeoJSON`);
+  return [{name:baseName(file.name), fc, crs:crsFromGeoJSON(fc)}];
+}
+function olToFC(features){ return GeoJSONFmt.writeFeaturesObject(features, {dataProjection:'EPSG:4326', featureProjection:'EPSG:4326'}); }
+async function readKML(text, name){
+  const feats = new ol.format.KML({extractStyles:false}).readFeatures(text, {dataProjection:'EPSG:4326', featureProjection:'EPSG:4326'});
+  const fc = olToFC(feats); fc.features.forEach(f=>{ const p=f.properties||{}; delete p.styleUrl; delete p.visibility; if(p.name&&!p.navn){ p.navn=p.name; delete p.name; } });
+  return [{name, fc, crs:'EPSG:4326'}];
+}
+async function readKMZ(file){
+  const JSZip = await loadLib('jszip','JSZip'); const z = await JSZip.loadAsync(await file.arrayBuffer());
+  const kmlName = Object.keys(z.files).find(n=>n.toLowerCase().endsWith('.kml'));
+  if(!kmlName) throw new Error(`Fant ingen KML i «${file.name}»`);
+  return readKML(await z.file(kmlName).async('string'), baseName(file.name));
+}
+async function readGPX(file){
+  const feats = new ol.format.GPX().readFeatures(await file.text(), {dataProjection:'EPSG:4326', featureProjection:'EPSG:4326'});
+  const fc = olToFC(feats); fc.features.forEach(f=>{ if(f.geometry) f.geometry.coordinates = strip3(f.geometry.coordinates); });
+  return [{name:baseName(file.name), fc, crs:'EPSG:4326'}];
+}
+function strip3(c){ return typeof c[0]==='number' ? [c[0],c[1]] : c.map(strip3); }
+async function readShapeZip(file){
+  const shp = await loadLib('shp','shp');
+  const JSZip = await loadLib('jszip','JSZip'); const z = await JSZip.loadAsync(await file.arrayBuffer());
+  const hasPrj = Object.keys(z.files).some(n=>n.toLowerCase().endsWith('.prj'));
+  let out = await shp(await file.arrayBuffer());
+  if(!Array.isArray(out)) out=[out];
+  return out.map(fc=>({name: fc.fileName ? fc.fileName.split('/').pop() : baseName(file.name), fc, crs: hasPrj ? 'EPSG:4326' : null}));
+}
+async function readShapeParts(files){
+  const shp = await loadLib('shp','shp');
+  const by = e => files.find(f=>ext(f.name)===e);
+  const s = by('shp'); if(!s) throw new Error('Shapefil mangler .shp-delen – slipp .shp, .dbf og .prj sammen (eller som zip)');
+  const d = by('dbf'), p = by('prj'), c = by('cpg');
+  const prj = p ? await p.text() : undefined;
+  const geoms = shp.parseShp(await s.arrayBuffer(), prj);
+  const props = d ? shp.parseDbf(await d.arrayBuffer(), c ? await c.arrayBuffer() : undefined) : geoms.map(()=>({}));
+  return [{name:baseName(s.name), fc: shp.combine([geoms, props]), crs: prj ? 'EPSG:4326' : null}];
+}
+
+// CSV / Excel: finn koordinatkolonner, spør hvis uklart
+function parseCSV(text){
+  text = text.replace(/^﻿/, '');
+  const first = text.split(/\r?\n/)[0] || '';
+  const delim = [';','\t',','].map(d=>[d, first.split(d).length]).sort((a,b)=>b[1]-a[1])[0][0];
+  const rows=[]; let row=[], cur='', q=false;
+  for(let i=0;i<text.length;i++){ const ch=text[i];
+    if(q){ if(ch==='"'){ if(text[i+1]==='"'){ cur+='"'; i++; } else q=false; } else cur+=ch; }
+    else if(ch==='"') q=true; else if(ch===delim){ row.push(cur); cur=''; }
+    else if(ch==='\n' || ch==='\r'){ if(ch==='\r'&&text[i+1]==='\n') i++; row.push(cur); rows.push(row); row=[]; cur=''; }
+    else cur+=ch; }
+  if(cur!==''||row.length){ row.push(cur); rows.push(row); }
+  return rows.filter(r=>r.some(c=>String(c).trim()!==''));
+}
+// Tolker desimalgrader, grader+minutter og grader+minutter+sekunder, med N/S/Ø/E/V/W og komma som desimaltegn
+function parseCoordValue(raw){
+  if(raw===null||raw===undefined) return NaN; if(typeof raw==='number') return raw;
+  let s = String(raw).trim().replace(/[’′]/g,"'").replace(/[”″]/g,'"'); if(!s) return NaN;
+  const isDms = /[°'"]|^[NSØEVW]\s*\d|\d\s*[NSØEVW]$/i.test(s);
+  if(!isDms){ s = s.replace(/\s/g,''); if(/^-?\d+,\d+$/.test(s)) s=s.replace(',','.'); else if(/^-?[\d.]+,\d+$/.test(s)) s=s.replace(/\./g,'').replace(',','.'); else s=s.replace(/,/g,''); const v=parseFloat(s); return Number.isFinite(v)?v:NaN; }
+  let sign = 1; const hem = (s.match(/^[NSØEVW]|[NSØEVW]$/i)||[''])[0].toUpperCase(); if(hem==='S'||hem==='W'||hem==='V') sign=-1;
+  if(/^-/.test(s.replace(/^[NSØEVW]\s*/i,''))) sign=-1;
+  const nums = (s.match(/\d+(?:[.,]\d+)?/g)||[]).map(x=>parseFloat(x.replace(',','.')));
+  if(!nums.length) return NaN;
+  return sign * (nums[0] + (nums[1]||0)/60 + (nums[2]||0)/3600);
+}
+const norm = h => String(h||'').toLowerCase().replace(/[\s_\-().°]/g,'');
+function detectColumns(header){
+  const n = header.map(norm);
+  const find = (...res) => n.findIndex(h=>res.some(r=>r.test(h)));
+  return {
+    lat: find(/^lat/, /latitude/, /breddegrad/, /^bredde/, /^nbredde/),
+    lon: find(/^lon/, /^lng/, /longitude/, /lengdegrad/, /^lengde/),
+    north: find(/^(n|nord|north|northing|y|ykoord|ykoordinat|utmn|nordkoordinat|nordm)$/, /northing/),
+    east: find(/^(e|ø|ost|øst|east|easting|x|xkoord|xkoordinat|utme|østkoordinat|ostkoordinat|østm|ostm)$/, /easting/),
+    zone: find(/^(sone|zone|utmsone|utmzone)$/),
+  };
+}
+async function rowsToFC(rows, name){
+  if(rows.length<2) throw new Error(`«${name}» har ingen datarader`);
+  const header = rows[0].map(h=>String(h).trim()); const data = rows.slice(1);
+  const col = detectColumns(header);
+  let xi, yi, geographic, confident = true;
+  if(col.lat>=0 && col.lon>=0){ xi=col.lon; yi=col.lat; }
+  else if(col.east>=0 && col.north>=0){ xi=col.east; yi=col.north; }
+  else confident = false;
+  const vals = i => data.slice(0,200).map(r=>parseCoordValue(r[i]));
+  if(confident){ const xs=vals(xi), ys=vals(yi); if(xs.filter(Number.isFinite).length < Math.min(3, data.length)) confident=false; }
+  if(!confident){
+    const opts = header.map((h,i)=>[String(i), h||`Kolonne ${i+1}`]);
+    const r = await dialog({title:'Hvilke kolonner er koordinater?', text:`Fant ikke koordinatkolonnene i «${name}» med sikkerhet. Velg øst/lengdegrad og nord/breddegrad:`,
+      fields:[{k:'x',label:'Øst / lengdegrad (X)',type:'select',value:String(col.lon>=0?col.lon:col.east>=0?col.east:1),options:opts},{k:'y',label:'Nord / breddegrad (Y)',type:'select',value:String(col.lat>=0?col.lat:col.north>=0?col.north:0),options:opts}], ok:'Neste'});
+    if(!r) return null; xi=+r.x; yi=+r.y;
+  }
+  const xs=vals(xi), ys=vals(yi);
+  geographic = looksGeographic(xs.filter(Number.isFinite), ys.filter(Number.isFinite));
+  let crs = 'EPSG:4326';
+  const perRowZone = !geographic && col.zone>=0;
+  if(!geographic && !perRowZone){
+    crs = await resolveCrs({features:[{geometry:{coordinates:[median(xs), median(ys)]}}]}, name, null);
+    if(!crs) return null;
+  }
+  const features=[]; let skipped=0;
+  data.forEach(r=>{
+    let x=parseCoordValue(r[xi]), y=parseCoordValue(r[yi]);
+    if(!Number.isFinite(x)||!Number.isFinite(y)){ skipped++; return; }
+    if(perRowZone){ const z=parseInt(r[col.zone],10); const code=ensureProjection(25800+z); if(!code){ skipped++; return; } [x,y]=proj4(code,'EPSG:4326',[x,y]); }
+    const props={}; header.forEach((h,i)=>{ if(i===xi||i===yi||!h) return; const v=r[i]; if(v===''||v===undefined||v===null) return; const num = typeof v==='number' ? v : (/^-?\d+([.,]\d+)?$/.test(String(v).trim()) ? parseFloat(String(v).replace(',','.')) : v); props[h]=num; });
+    features.push({type:'Feature', geometry:{type:'Point', coordinates:[x,y]}, properties:props});
+  });
+  if(skipped) toast(`${skipped} rader uten gyldige koordinater ble hoppet over`);
+  const fc = {type:'FeatureCollection',features};
+  if(!perRowZone) reprojectFC(fc, crs);
+  return [{name, fc, crs:'EPSG:4326', resolved:true}];
+}
+async function readCSV(file){ return rowsToFC(parseCSV(await file.text()), baseName(file.name)); }
+async function readXLSX(file){
+  const XLSX = await loadLib('xlsx','XLSX'); const wb = XLSX.read(await file.arrayBuffer(), {type:'array'});
+  let sheet = wb.SheetNames[0];
+  if(wb.SheetNames.length>1){ const r = await dialog({title:'Hvilket ark?', text:`«${file.name}» har flere ark. Velg arket med koordinatene:`, fields:[{k:'s',label:'Ark',type:'select',value:sheet,options:wb.SheetNames.map(n=>[n,n])}], ok:'Neste'}); if(!r) return null; sheet=r.s; }
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheet], {header:1, raw:true, defval:''});
+  return rowsToFC(rows, wb.SheetNames.length>1 ? `${baseName(file.name)} – ${sheet}` : baseName(file.name));
+}
+
+// GeoTIFF: leses i nettleseren, nedskaleres og fargelegges til et bilde som legges oppå kartet.
+// Originalfilen lagres i Supabase Storage for nedlasting.
+const RAMP_DEPTH = [[0,'#e6f4f1'],[0.2,'#a9d8e6'],[0.45,'#5aa6d6'],[0.7,'#2a6fb0'],[1,'#16313b']];
+const RAMP_TERRAIN = [[0,'#2a6fb0'],[0.25,'#8fc8a0'],[0.5,'#e4d79a'],[0.75,'#b58b5a'],[1,'#ffffff']];
+function rampColor(ramp, t){ t=Math.max(0,Math.min(1,t)); for(let i=1;i<ramp.length;i++){ if(t<=ramp[i][0]){ const [t0,c0]=ramp[i-1],[t1,c1]=ramp[i]; const f=(t-t0)/(t1-t0||1); const a=parseInt(c0.slice(1),16), b=parseInt(c1.slice(1),16); return [((a>>16)&255)*(1-f)+((b>>16)&255)*f, ((a>>8)&255)*(1-f)+((b>>8)&255)*f, (a&255)*(1-f)+(b&255)*f]; } } return [0,0,0]; }
+async function readGeoTIFF(file){
+  const GT = await loadLib('geotiff','GeoTIFF');
+  const tiff = await GT.fromArrayBuffer(await file.arrayBuffer()); const img = await tiff.getImage();
+  const gk = img.getGeoKeys ? img.getGeoKeys() : {};
+  let code = gk.ProjectedCSTypeGeoKey || gk.GeographicTypeGeoKey;
+  let crs = code && code!==32767 ? (code===4326||code===4258 ? 'EPSG:4326' : ensureProjection(code)) : null;
+  if(!crs){
+    const r = await dialog({title:'Koordinatsystem for rasteret', text:`«${file.name}» oppgir ${code&&code!==32767?'EPSG:'+code+', som AGIS ikke kjenner':'ikke koordinatsystem'}. Velg riktig:`, fields:[{k:'crs',label:'Koordinatsystem',type:'select',value:VIEW_CRS,options:crsChoices()}], ok:'Importer'});
+    if(!r) return null; crs = r.crs;
+  }
+  const bbox = img.getBoundingBox(); const W=img.getWidth(), H=img.getHeight();
+  const scale = Math.min(1, 2048/Math.max(W,H)); const w=Math.max(1,Math.round(W*scale)), h=Math.max(1,Math.round(H*scale));
+  const spp = img.getSamplesPerPixel(); const nodata = img.getGDALNoData();
+  const canvas = document.createElement('canvas'); canvas.width=w; canvas.height=h; const ctx=canvas.getContext('2d'); const out=ctx.createImageData(w,h);
+  let legend=null;
+  if(spp>=3){
+    const rgb = await img.readRasters({width:w, height:h, interleave:true, samples:[0,1,2]});
+    const bits = img.getBitsPerSample(); const div = bits>8 ? (2**bits-1)/255 : 1;
+    for(let i=0,j=0;i<w*h;i++,j+=3){ out.data[i*4]=rgb[j]/div; out.data[i*4+1]=rgb[j+1]/div; out.data[i*4+2]=rgb[j+2]/div; out.data[i*4+3]=(rgb[j]===0&&rgb[j+1]===0&&rgb[j+2]===0)?0:255; }
+  } else {
+    const [band] = await img.readRasters({width:w, height:h, samples:[0]});
+    const valid=[]; for(let i=0;i<band.length;i+=Math.max(1,Math.floor(band.length/20000))){ const v=band[i]; if(Number.isFinite(v) && v!==nodata && v>-1e30) valid.push(v); }
+    valid.sort((a,b)=>a-b); const lo=valid[Math.floor(valid.length*0.02)]??0, hi=valid[Math.floor(valid.length*0.98)]??1;
+    const isDepth = hi<=0 || (median(valid)<0);    // negative verdier = dybde under havflaten
+    const ramp = isDepth ? RAMP_DEPTH : RAMP_TERRAIN;
+    for(let i=0;i<band.length;i++){ const v=band[i]; if(!Number.isFinite(v)||v===nodata||v<-1e30){ out.data[i*4+3]=0; continue; }
+      const t = isDepth ? (hi - v)/((hi-lo)||1) : (v-lo)/((hi-lo)||1); const [r,g,b]=rampColor(ramp,t); out.data[i*4]=r; out.data[i*4+1]=g; out.data[i*4+2]=b; out.data[i*4+3]=255; }
+    legend = {min:lo, max:hi, ramp: isDepth?'depth':'terrain', unit: isDepth?'m dyp':''};
+  }
+  ctx.putImageData(out,0,0);
+  const png = await new Promise(r=>canvas.toBlob(r,'image/png'));
+  return [{name:baseName(file.name), raster:{png, original:file, extent:bbox, projection:crs, legend, size:[W,H]}}];
+}
+
+// --- Hovedflyt ---------------------------------------------------------------
+async function importFiles(fileList){
+  if(!S.map){ toast('Åpne et kart først'); return; }
+  if(!canEdit()){ toast('Kun administratorer og redigerere kan legge til lag'); return; }
+  const files=[...fileList]; if(!files.length) return;
+  // Shapefil-deler (.shp/.dbf/.prj/.cpg/.shx) med samme navn hører sammen
+  const groups=[]; const shpParts={};
+  for(const f of files){ const e=ext(f.name); if(['shp','dbf','prj','cpg','shx','sbn','sbx'].includes(e)){ (shpParts[baseName(f.name).toLowerCase()] ||= []).push(f); } else groups.push([f]); }
+  Object.values(shpParts).forEach(g=>groups.push(g));
+  let added=0;
+  for(const g of groups){
+    const label = g.length>1 ? baseName(g[0].name) : g[0].name;
+    try{
+      showBusy(`Leser ${label} …`);
+      let kind = g.length>1 ? 'shapeparts' : await sniff(g[0]);
+      if(!kind){
+        hideBusy();
+        const r = await dialog({title:'Hva slags fil er dette?', text:`Klarte ikke å gjenkjenne «${g[0].name}». Velg format:`, fields:[{k:'kind',label:'Format',type:'select',value:'geojson',options:Object.entries(FORMAT_LABEL).filter(([k])=>k!=='shapeparts')}], ok:'Prøv'});
+        if(!r) continue; kind=r.kind; showBusy(`Leser ${label} …`);
+      }
+      let parts;
+      if(kind==='geojson') parts = await readGeoJSON(g[0]);
+      else if(kind==='kml') parts = await readKML(await g[0].text(), baseName(g[0].name));
+      else if(kind==='kmz') parts = await readKMZ(g[0]);
+      else if(kind==='gpx') parts = await readGPX(g[0]);
+      else if(kind==='shapezip') parts = await readShapeZip(g[0]);
+      else if(kind==='shapeparts') parts = await readShapeParts(g);
+      else if(kind==='zipgeojson'){ const JSZip=await loadLib('jszip','JSZip'); const z=await JSZip.loadAsync(await g[0].arrayBuffer()); const n=Object.keys(z.files).find(x=>/\.(geo)?json$/i.test(x)); parts = await readGeoJSON(new File([await z.file(n).async('blob')], n)); }
+      else if(kind==='csv'){ hideBusy(); parts = await readCSV(g[0]); }
+      else if(kind==='xlsx'){ hideBusy(); parts = await readXLSX(g[0]); }
+      else if(kind==='raster') parts = await readGeoTIFF(g[0]);
+      hideBusy();
+      if(!parts) continue;
+      for(const part of parts){
+        if(part.raster){ await addRasterLayer(part); added++; continue; }
+        if(!part.resolved){ const crs = await resolveCrs(part.fc, part.name, part.crs); if(!crs) continue; part.fc = reprojectFC(part.fc, crs); }
+        const n = await addVectorLayer(part.name, part.fc);
+        if(n) added++;
+      }
+    }catch(e){ hideBusy(); console.error(e); await dialog({title:'Kunne ikke importere', text:`«${label}»: ${e.message||e}`, fields:[], ok:'OK'}); }
+  }
+  if(added){ renderPanel(); fitToData(); }
+}
+async function addVectorLayer(name, fc){
+  fc.features = (fc.features||[]).filter(f=>f && f.geometry);
+  if(!fc.features.length){ toast(`«${name}» inneholder ingen geometrier`); return 0; }
+  const {xs, ys} = sampleCoords(fc);
+  if(!looksGeographic(xs, ys)) throw new Error('Koordinatene ble ikke gyldige grader etter omregning – sjekk valgt koordinatsystem');
+  const keys = new Set(); fc.features.slice(0,50).forEach(f=>Object.keys(f.properties||{}).forEach(k=>keys.add(k.toLowerCase())));
+  const style = {color:randomColor(), fillOpacity:.25, width:2, radius:6};
+  if(keys.has('tilstand')) style.colorBy = {prop:'tilstand', map:TILSTAND, legend:{1:'Tilstand 1',2:'Tilstand 2',3:'Tilstand 3',4:'Tilstand 4'}};
+  const l = await store.createLayer(S.map.id,{name, kind:'vector', style, sort_order:S.layers.length});
+  let n=0; for(let i=0;i<fc.features.length;i+=500){ showBusy(`Lagrer ${name} (${Math.min(i+500,fc.features.length)}/${fc.features.length}) …`); n += await store.importGeojson(l.id, {type:'FeatureCollection', features:fc.features.slice(i,i+500)}); }
+  hideBusy();
+  l._fc = await store.layerGeojson(l.id); S.layers.push(l); S.activeLayerId=l.id; await renderLayer(l);
+  toast(`«${name}»: ${n} objekter importert`);
+  return n;
+}
+async function addRasterLayer(part){
+  const r = part.raster; showBusy(`Laster opp ${part.name} …`);
+  const id = uuid();
+  const pngPath = await store.uploadFile(`${S.map.id}/${id}.png`, r.png, 'image/png');
+  const tifPath = await store.uploadFile(`${S.map.id}/${id}-${r.original.name.replace(/[^\w.\-]/g,'_')}`, r.original, 'image/tiff');
+  const l = await store.createLayer(S.map.id,{name:part.name, kind:'raster', source:{png:pngPath, tif:tifPath, extent:r.extent, projection:r.projection, legend:r.legend, size:r.size}, style:{opacity:.9}, sort_order:S.layers.length});
+  hideBusy(); S.layers.push(l); await renderLayer(l);
+  toast(`«${part.name}» lagt til (${r.size[0]}×${r.size[1]} px, ${r.projection})`);
+}
+function showBusy(msg){ let b=$('#busy'); if(!b){ b=document.createElement('div'); b.id='busy'; b.className='toast busy'; document.body.appendChild(b); } b.textContent=msg; b.hidden=false; }
+function hideBusy(){ const b=$('#busy'); if(b) b.hidden=true; }
+
+// Dra og slipp hvor som helst over kartet (kun for redigerere)
+function initDropZone(){
+  const wrap = $('.mapwrap'); const ov = $('#dropOverlay'); let depth=0;
+  const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types||[])].includes('Files');
+  document.addEventListener('dragenter', e=>{ if(!hasFiles(e)||!S.map||!canEdit()) return; depth++; ov.hidden=false; });
+  document.addEventListener('dragleave', e=>{ if(!hasFiles(e)) return; depth=Math.max(0,depth-1); if(!depth) ov.hidden=true; });
+  document.addEventListener('dragover', e=>{ if(hasFiles(e)) e.preventDefault(); });
+  document.addEventListener('drop', e=>{ if(!hasFiles(e)) return; e.preventDefault(); depth=0; ov.hidden=true; if($('#dialogHost').children.length) return; importFiles(e.dataTransfer.files); });
 }
 
 // ---- Dialog / toast / hjelpere -------------------------------------------
@@ -705,7 +1151,7 @@ async function openMap(id){
   // CRS: lagret på kartet, ellers bestemt av senter (eller av dataene om senter mangler)
   let centerLL = (m.center_lng && m.center_lat) ? [m.center_lng, m.center_lat] : null;
   if(!centerLL){ let b=null; S.layers.filter(l=>l._fc).forEach(l=>{ b=bboxOf(l._fc,b); }); centerLL = b ? [(b[0]+b[2])/2,(b[1]+b[3])/2] : [14.5,66.5]; }
-  const crs = m.crs && CRS[m.crs] ? m.crs : crsForLat(centerLL[1]);
+  const crs = m.crs && CRS[m.crs] ? m.crs : crsFor(centerLL[0], centerLL[1]);
   S.suppressSave=true;
   setViewCrs(crs, centerLL, m.zoom||12);
   await renderAllLayers();
@@ -735,6 +1181,7 @@ async function boot(){
   if(id) await openMap(id); else { $('#drawTools').hidden=true; await renderMapsList(); if(window.innerWidth<=760 && !EMBED) $('#panel').classList.add('open'); }
 }
 initMap();
+initDropZone();
 boot().catch(err);
 if(!DEMO){ store.sb.auth.onAuthStateChange((ev, session)=>{ const em=(session?.user?.email||'').toLowerCase(); if((ev==='SIGNED_IN'||ev==='SIGNED_OUT') && em!==(S.user?.email||'')) boot().catch(err); }); }
 })();
