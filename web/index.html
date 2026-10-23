@@ -109,6 +109,13 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
 .comment .who{font-size:11px;color:var(--muted);font-family:var(--mono)}
 .access{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
 .custgroup{margin-bottom:14px}
+.pill.lock,.lockbadge{background:#f6e3df;color:#9c3326}
+.lockbadge{font-size:10px;font-weight:600;letter-spacing:.1em;padding:2px 7px;border-radius:3px;white-space:nowrap}
+.notice.lock{background:#f6e3df;color:#7a271d}
+.lgroup{display:flex;align-items:center;gap:8px;padding:8px 0 4px;margin-top:6px;border-bottom:1px solid var(--line);font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;cursor:pointer}
+.lgroup input{width:16px;height:16px;accent-color:var(--sea)} .lgroup .cnt{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:400}
+.lgroup .chev{transition:transform .15s} .lgroup.closed .chev{transform:rotate(-90deg)}
+.layer.ingroup{padding-left:10px}
 .custname{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:4px 0 6px}
 .custname span{text-transform:none;letter-spacing:0;font-weight:400}
 .welcome{text-align:center;padding:18px 6px 10px}
@@ -144,6 +151,9 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
 .dialog{position:fixed;inset:0;background:rgba(22,49,59,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
 .dialog .box{background:var(--panel);color:var(--fg);border-radius:8px;padding:18px;width:min(420px,100%);box-shadow:var(--shadow)}
 .dialog h3{margin:0 0 12px;font-size:15px}
+.dialog p.hint{white-space:pre-wrap;max-height:240px;overflow:auto}
+.chk{display:flex;gap:8px;align-items:flex-start;font-size:13px;color:var(--fg)}
+.chk input{margin-top:2px;width:auto}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--navy);color:#fff;padding:8px 14px;border-radius:999px;font-size:13px;z-index:60;box-shadow:var(--shadow)}
 
 
@@ -210,7 +220,7 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
       <img src="logo-white.png" alt="Aspecto" class="brandlogo">
       <span class="brandtag">AGIS</span>
     </a>
-    <div class="title"><input id="mapTitle" placeholder="Velg et kart" readonly></div>
+    <div class="title"><input id="mapTitle" placeholder="Velg et kart" readonly><span class="lockbadge" id="lockBadge" hidden title="Begrenset kart – bare navngitte personer har tilgang">BEGRENSET</span></div>
     <div class="userchip" id="userchip"></div>
   </div>
 
@@ -243,7 +253,7 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
     <div class="modehint" id="modehint" hidden></div>
     <div class="statusbar"><span id="coords">—</span><span class="crsbadge" id="crsbadge">—</span></div>
     <div id="popup" class="popup" hidden></div>
-    <div class="dropoverlay" id="dropOverlay" hidden><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><b>Slipp filene for å legge dem til som lag</b><span>GeoJSON · KML/KMZ · GPX · Shapefil · CSV/Excel · GeoTIFF</span></div></div>
+    <div class="dropoverlay" id="dropOverlay" hidden><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><b>Slipp filene for å legge dem til som lag</b><span>Filer eller hele mapper · GeoTIFF · GeoPackage · Shapefil · GeoJSON · KML · GPX · CSV/Excel</span></div></div>
     <div class="embedbadge" id="embedbadge" hidden></div>
     <button class="btn primary panel-toggle" id="panelToggle">Lag og info</button>
   </div>
@@ -345,6 +355,7 @@ class DemoStore {
   async uploadFile(path, blob){ this.files = this.files||{}; this.files[path]=URL.createObjectURL(blob); return path; }
   async fileUrl(path){ return (this.files||{})[path] || path; }
   async removeFiles(){}
+  async logAccess(){}
   async mapBbox(mapId){ const ls=await this.listLayers(mapId); let b=null; for(const l of ls){ if(l.kind!=='vector') continue; const fc=await this.layerGeojson(l.id); b=bboxOf(fc,b);} return b; }
 }
 
@@ -380,6 +391,7 @@ class SupabaseStore {
   async uploadFile(path, blob, type){ const {error}=await this.sb.storage.from('kart-filer').upload(path, blob, {contentType:type, upsert:true}); if(error) throw error; return path; }
   async fileUrl(path){ const {data,error}=await this.sb.storage.from('kart-filer').createSignedUrl(path, 60*60*12); if(error) throw error; return data.signedUrl; }
   async removeFiles(paths){ await this.sb.storage.from('kart-filer').remove(paths.filter(Boolean)); }
+  async logAccess(mapId, action){ return this._q(this.sb.rpc('kart_log',{p_map:mapId, p_action:action})); }
 }
 
 // ---- Geometri-hjelpere ---------------------------------------------------
@@ -666,9 +678,10 @@ async function renderMapsList(){
   let maps=[]; try{ maps=await store.listMaps(); }catch(e){ body.innerHTML=`<div class="notice">Kunne ikke hente kart: ${esc(e.message)}</div>`; return; }
   body.innerHTML = (DEMO?'<div class="notice">Demo-modus: data lagres ikke. AGIS kobles til Supabase i konfigurasjonen for drift.</div>':'') +
     (maps.length ? (()=>{ const groups={}; maps.forEach(m=>{ (groups[m.customer||'Uten kunde'] ||= []).push(m); });
-      return Object.keys(groups).sort((a,b)=> a==='Uten kunde' ? 1 : b==='Uten kunde' ? -1 : a.localeCompare(b,'nb')).map(c=>`<div class="custgroup"><h3 class="custname">${esc(c)}<span>${groups[c].length} kart</span></h3>${groups[c].map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small></button>`).join('')}</div>`).join(''); })() : '<div class="hint">Ingen kart ennå.</div>');
+      return Object.keys(groups).sort((a,b)=> a==='Uten kunde' ? 1 : b==='Uten kunde' ? -1 : a.localeCompare(b,'nb')).map(c=>`<div class="custgroup"><h3 class="custname">${esc(c)}<span>${groups[c].length} kart</span></h3>${groups[c].map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}${m.restricted?'<span class="pill lock">begrenset</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small></button>`).join('')}</div>`).join(''); })() : '<div class="hint">Ingen kart ennå.</div>');
   body.querySelectorAll('.mapcard').forEach(b=>b.onclick=()=>openMap(b.dataset.id));
-  const nm=$('#newMap'); if(nm) nm.onclick=async()=>{ const r=await dialog({title:'Nytt kart',fields:[{k:'customer',label:'Kunde',value:''},{k:'title',label:'Tittel',value:''},{k:'description',label:'Beskrivelse',value:'',type:'textarea'}],ok:'Opprett'}); if(!r||!r.title) return; if(!r.customer) delete r.customer; const [lng,lat]=toLonLat(view.getCenter(),VIEW_CRS); const m=await store.createMap({customer:r.customer,title:r.title,description:r.description,center_lng:lng,center_lat:lat,zoom:view.getZoom(),crs:VIEW_CRS}); openMap(m.id); };
+  if(S.user&&S.user.staff) body.insertAdjacentHTML('beforeend','<div class="hint droptip">Tips: dra en mappe eller filer hit for å lage et nytt kart, f.eks. for en ny kunde.</div>');
+  const nm=$('#newMap'); if(nm) nm.onclick=async()=>{ const r=await dialog({title:'Nytt kart',fields:[{k:'customer',label:'Kunde',type:'datalist',options:[...new Set((await store.listMaps().catch(()=>[])).map(x=>x.customer).filter(Boolean))],value:''},{k:'restricted',label:'Tilgang',type:'checkbox',value:false,hint:'Begrenset – bare personer jeg legger til ser kartet (ikke andre ansatte)'},{k:'title',label:'Tittel',value:''},{k:'description',label:'Beskrivelse',value:'',type:'textarea'}],ok:'Opprett'}); if(!r||!r.title) return; if(!r.customer) delete r.customer; const [lng,lat]=toLonLat(view.getCenter(),VIEW_CRS); const m=await store.createMap({customer:r.customer,restricted:!!r.restricted,title:r.title,description:r.description,center_lng:lng,center_lat:lat,zoom:view.getZoom(),crs:VIEW_CRS}); openMap(m.id); };
 }
 function renderPanel(){
   if(!S.map) return renderMapsList();
@@ -677,7 +690,7 @@ function renderPanel(){
   $('#panelTitle').textContent = {layers:'Lag', comments:'Kommentarer', share:'Deling og innbygging'}[t];
   $('#panelActions').innerHTML = (t==='layers'&&canEdit())?'<button class="btn small" id="addLayer">+ Legg til lag</button>':'';
   if(t==='layers'){
-    const rows=[...S.layers].sort((a,b)=>b.sort_order-a.sort_order).map(l=>{
+    const rowHtml = l=>{
       const st=l.style||{}; const n = l.kind==='vector' ? (l._fc?l._fc.features.length+' objekter':'…') : l.kind==='raster' ? `GeoTIFF · ${esc(l.source?.projection||'')}` : l.kind.toUpperCase();
       let legend=''; const lg=l.kind==='raster'&&l.source?.legend; if(lg){ const ramp=lg.ramp==='depth'?RAMP_DEPTH:RAMP_TERRAIN; const grad=`linear-gradient(90deg,${ramp.map(([t,c])=>c+' '+Math.round(t*100)+'%').join(',')})`; const f=v=>Math.abs(v)>=100?Math.round(v):(+v).toFixed(1); legend=`<div class="legend rlegend"><span class="mono">${f(lg.ramp==='depth'?lg.max:lg.min)}</span><i class="bar" style="background:${grad}"></i><span class="mono">${f(lg.ramp==='depth'?lg.min:lg.max)} ${lg.ramp==='depth'?'m':''}</span></div>`; }
       if(st.colorBy&&st.colorBy.map){ legend='<div class="legend">'+Object.entries(st.colorBy.map).map(([k,v])=>`<span><i style="background:${v}"></i>${esc(st.colorBy.legend?.[k]||k)}</span>`).join('')+'</div>'; }
@@ -685,7 +698,13 @@ function renderPanel(){
         <input type="checkbox" ${l.visible?'checked':''} title="Vis/skjul" data-act="vis">
         <div><div class="name" title="${esc(l.name)}">${esc(l.name)}${S.activeLayerId===l.id&&canEdit()?'<span class="pill">tegner hit</span>':''}</div><div class="meta">${n}</div></div>
         <div class="acts"><button class="iconbtn" data-act="zoom" title="Zoom til lag">${ICON.target}</button>${canEdit()?`<button class="iconbtn" data-act="edit" title="Innstillinger">${ICON.gear}</button>`:''}${l.kind==='vector'?`<button class="iconbtn" data-act="dl" title="Last ned GeoJSON">${ICON.down}</button>`:l.kind==='raster'&&l.source?.tif?`<button class="iconbtn" data-act="dltif" title="Last ned original GeoTIFF">${ICON.down}</button>`:''}</div>
-        ${legend}</div>`; }).join('');
+        ${legend}</div>`; };
+    S.closedGroups = S.closedGroups || new Set();
+    const sorted=[...S.layers].sort((a,b)=>b.sort_order-a.sort_order);
+    const groupNames=[...new Set(sorted.map(l=>l.style?.group).filter(Boolean))];
+    let rows = sorted.filter(l=>!l.style?.group).map(rowHtml).join('');
+    groupNames.forEach(gn=>{ const ls=sorted.filter(l=>l.style?.group===gn); const allOn=ls.every(l=>l.visible!==false); const closed=S.closedGroups.has(gn);
+      rows += `<div class="lgroup${closed?' closed':''}" data-group="${esc(gn)}"><input type="checkbox" ${allOn?'checked':''} title="Vis/skjul hele gruppen" data-gvis><svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg><span>${esc(gn)}</span><span class="cnt">${ls.length} lag</span></div>` + (closed?'':ls.map(l=>rowHtml(l).replace('class="layer','class="layer ingroup')).join('')); });
     body.innerHTML = (rows || '<div class="hint">Ingen lag ennå.</div>') + (canEdit()?'<div class="hint droptip">Tips: dra og slipp filer rett inn i kartet for å legge dem til som lag.</div>':'');
     body.querySelectorAll('.layer').forEach(row=>{ const l=S.layers.find(x=>x.id===row.dataset.id);
       row.querySelector('[data-act=vis]').onchange=async e=>{ l.visible=e.target.checked; if(l._ol) l._ol.setVisible(l.visible); if(canEdit()) store.updateLayer(l.id,{visible:l.visible}).catch(err); };
@@ -695,6 +714,10 @@ function renderPanel(){
       const dt=row.querySelector('[data-act=dltif]'); if(dt) dt.onclick=async()=>{ try{ window.open(await store.fileUrl(l.source.tif),'_blank','noopener'); }catch(e){ err(e); } };
       row.querySelector('.name').onclick=()=>{ if(canEdit()&&l.kind==='vector'){ S.activeLayerId=l.id; renderPanel(); } };
     });
+    body.querySelectorAll('.lgroup').forEach(gh=>{ const gn=gh.dataset.group; const ls=S.layers.filter(l=>l.style?.group===gn);
+      gh.querySelector('[data-gvis]').onclick=e=>e.stopPropagation();
+      gh.querySelector('[data-gvis]').onchange=e=>{ const v=e.target.checked; ls.forEach(l=>{ l.visible=v; if(l._ol) l._ol.setVisible(v); if(canEdit()) store.updateLayer(l.id,{visible:v}).catch(()=>{}); }); renderPanel(); };
+      gh.onclick=()=>{ S.closedGroups.has(gn)?S.closedGroups.delete(gn):S.closedGroups.add(gn); renderPanel(); }; });
     const al=$('#addLayer'); if(al) al.onclick=addLayerDialog;
   }
   if(t==='comments'){
@@ -705,17 +728,23 @@ function renderPanel(){
     const link = location.origin+location.pathname+'?map='+S.map.id;
     const embed = `<iframe src="${link}&embed=1" width="100%" height="560" style="border:0;border-radius:8px" loading="lazy" allowfullscreen></iframe>`;
     body.innerHTML = `
-      ${canEdit()?`<div class="field"><label><input type="checkbox" id="isPublic" ${S.map.is_public?'checked':''}> Offentlig kart (alle med lenken kan se, uten innlogging)</label><div class="hint">Skru på for kart som skal vises åpent på aspecto.no.</div></div>`:''}
+      ${S.map.restricted?`<div class="notice lock">Begrenset kart. Bare eier og personene på tilgangslisten ser det, heller ikke andre ansatte i Aspecto. Kartet kan ikke gjøres offentlig, og visninger logges.</div>`:''}
+      ${canEdit()?`<div class="field"><label class="chk"><input type="checkbox" id="isRestricted" ${S.map.restricted?'checked':''}> Begrenset tilgang (gradert/sensitiv data)</label></div>`:''}
+      ${canEdit()&&!S.map.restricted?`<div class="field"><label class="chk"><input type="checkbox" id="isPublic" ${S.map.is_public?'checked':''}> Offentlig kart (alle med lenken kan se, uten innlogging)</label><div class="hint">Skru på for kart som skal vises åpent på aspecto.no.</div></div>`:''}
       ${S.map.customer?`<div class="notice">Kunde: <b>${esc(S.map.customer)}</b></div>`:''}<div class="section"><h3>Lenke</h3><div class="row"><input class="mono" id="shareLink" value="${esc(link)}" readonly style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><button class="btn small" id="copyLink">Kopier</button></div></div>
-      <div class="section"><h3>Innbygging på nettside</h3><pre class="embed" id="embedCode">${esc(embed)}</pre><button class="btn small" id="copyEmbed">Kopier kode</button><div class="hint" style="margin-top:6px">Innlogging skjer ikke inne i rammen – kart som bygges inn bør være offentlige, ellers vises en «Åpne i AGIS»-knapp.</div></div>
+      ${S.map.restricted?'':`<div class="section"><h3>Innbygging på nettside</h3><pre class="embed" id="embedCode">${esc(embed)}</pre><button class="btn small" id="copyEmbed">Kopier kode</button><div class="hint" style="margin-top:6px">Innlogging skjer ikke inne i rammen – kart som bygges inn bør være offentlige, ellers vises en «Åpne i AGIS»-knapp.</div></div>`}
       ${canEdit()?`<div class="section"><h3>Tilgang per e-post</h3><div id="accessList">${S.access.map(a=>`<div class="access"><span>${esc(a.email)} <span class="pill">${a.role==='editor'?'redigerer':'leser'}</span></span><button class="iconbtn" data-email="${esc(a.email)}" title="Fjern">${ICON.trash}</button></div>`).join('')||'<div class="hint">Ingen eksterne. Ansatte (@'+esc(CFG.staffDomain||'aspecto.no')+') har alltid tilgang.</div>'}</div>
         <div class="row" style="margin-top:8px"><input id="accEmail" placeholder="kunde@firma.no" type="email" style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><select id="accRole" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><option value="viewer">Leser</option><option value="editor">Redigerer</option></select><button class="btn small" id="accAdd">Legg til</button></div>
         <div class="hint" style="margin-top:6px">Personen må også være invitert som gjest i Aspectos Microsoft-tenant for å kunne logge inn (MFA håndheves der).</div></div>
       <div class="section"><h3>Koordinatsystem</h3><div class="row"><select id="crsSel" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)">${Object.entries(CRS).map(([k,v])=>`<option value="${k}" ${k===VIEW_CRS?'selected':''}>${v.region}: ${v.label} – ${v.name}</option>`).join('')}</select></div><div class="hint" style="margin-top:6px">Standard velges fra kartets senter: UTM 32 sør for ${CRS_SPLIT_LAT}°N, UTM 33 nord for, UTM 35 i Finnmark, Faroe TM på Færøyane og British National Grid i Skottland. Grunnlag: Kartverket topo i Norge, OpenStreetMap utenfor.</div></div>
       <div class="section"><h3>Kart</h3><div class="row"><button class="btn small" id="editMeta">Rediger tittel/beskrivelse</button><button class="btn small danger" id="delMap">Slett kart</button></div></div>`:''}`;
-    $('#copyLink').onclick=()=>copy(link); $('#copyEmbed').onclick=()=>copy(embed);
+    $('#copyLink').onclick=()=>copy(link); const ce=$('#copyEmbed'); if(ce) ce.onclick=()=>copy(embed);
+    const ir=$('#isRestricted'); if(ir) ir.onchange=async()=>{
+      if(!ir.checked){ const ok=await dialog({title:'Oppheve begrensning?', text:'Da kan alle ansatte i Aspecto se kartet. Gjør dette bare hvis dataene er frigitt.', fields:[], ok:'Opphev begrensning'}); if(!ok){ ir.checked=true; return; } }
+      const patch = ir.checked ? {restricted:true, is_public:false} : {restricted:false};
+      Object.assign(S.map, await store.updateMap(S.map.id, patch)); $('#lockBadge').hidden=!S.map.restricted; renderPanel(); toast(ir.checked?'Kartet er nå begrenset':'Begrensningen er opphevet'); };
     const ip=$('#isPublic'); if(ip) ip.onchange=async()=>{ S.map.is_public=ip.checked; await store.updateMap(S.map.id,{is_public:ip.checked}); toast(ip.checked?'Kartet er nå offentlig':'Kartet er nå privat'); };
-    const aa=$('#accAdd'); if(aa) aa.onclick=async()=>{ const em=$('#accEmail').value.trim().toLowerCase(); if(!em.includes('@')) return; await store.setAccess(S.map.id,em,$('#accRole').value); S.access=await store.listAccess(S.map.id); renderPanel(); };
+    const aa=$('#accAdd'); if(aa) aa.onclick=async()=>{ const em=$('#accEmail').value.trim().toLowerCase(); if(!em.includes('@')) return; if(S.map.restricted){ const ok=await dialog({title:'Gi tilgang til begrenset kart?', text:`${em} får se alle lag i «${S.map.title}». Bekreft at personen er klarert for dataene (f.eks. godkjent av Forsvaret).`, fields:[], ok:'Gi tilgang'}); if(!ok) return; } await store.setAccess(S.map.id,em,$('#accRole').value); S.access=await store.listAccess(S.map.id); renderPanel(); };
     body.querySelectorAll('[data-email]').forEach(b=>b.onclick=async()=>{ await store.removeAccess(S.map.id,b.dataset.email); S.access=await store.listAccess(S.map.id); renderPanel(); });
     const cs=$('#crsSel'); if(cs) cs.onchange=()=>setMapCrs(cs.value);
     const em=$('#editMeta'); if(em) em.onclick=async()=>{ const r=await dialog({title:'Rediger kart',fields:[{k:'customer',label:'Kunde',value:S.map.customer||''},{k:'title',label:'Tittel',value:S.map.title},{k:'description',label:'Beskrivelse',value:S.map.description||'',type:'textarea'}],ok:'Lagre'}); if(!r) return; if(!r.customer) r.customer=null; Object.assign(S.map, await store.updateMap(S.map.id,r)); $('#mapTitle').value=S.map.title; renderPanel(); };
@@ -729,10 +758,12 @@ async function addLayerDialog(){
       <h3>Legg til lag</h3>
       <label class="dropzone" id="dz" for="dzFile">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>
-        <b>Dra og slipp filer her</b><span>eller klikk for å velge</span>
-        <small>GeoJSON · KML/KMZ · GPX · Shapefil (zip eller .shp/.dbf/.prj) · CSV/Excel med koordinater · GeoTIFF</small>
+        <b>Dra og slipp filer eller hele mapper her</b><span>eller klikk for å velge filer</span>
+        <small>GeoTIFF · GeoPackage · Shapefil · GeoJSON · KML/KMZ · GPX · CSV/Excel med koordinater</small>
         <input type="file" id="dzFile" multiple hidden>
       </label>
+      <input type="file" id="dzDir" webkitdirectory multiple hidden>
+      <div style="text-align:center;margin-top:8px"><button type="button" class="btn small" id="pickDir">Velg en mappe …</button></div>
       <div class="hint" style="margin:10px 0 6px">AGIS tolker formatet og koordinatsystemet selv, og spør hvis noe er uklart.</div>
       <div class="optgrid">
         <button type="button" class="btn" data-k="catalog">Fra katalog</button>
@@ -746,8 +777,10 @@ async function addLayerDialog(){
     const dz=host.querySelector('#dz');
     ['dragenter','dragover'].forEach(ev=>dz.addEventListener(ev,e=>{ e.preventDefault(); e.stopPropagation(); dz.classList.add('over'); }));
     dz.addEventListener('dragleave',()=>dz.classList.remove('over'));
-    dz.addEventListener('drop',e=>{ e.preventDefault(); e.stopPropagation(); close({files:e.dataTransfer.files}); });
-    host.querySelector('#dzFile').onchange=e=>close({files:e.target.files});
+    dz.addEventListener('drop',e=>{ e.preventDefault(); e.stopPropagation(); const dt=e.dataTransfer; collectDropped(dt).then(list=>close({files:list})); });
+    host.querySelector('#dzFile').onchange=e=>close({files:filesFromInput(e.target.files)});
+    host.querySelector('#dzDir').onchange=e=>close({files:filesFromInput(e.target.files)});
+    host.querySelector('#pickDir').onclick=e=>{ e.preventDefault(); host.querySelector('#dzDir').click(); };
     host.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>close({kind:b.dataset.k}));
     host.querySelector('#dlgCancel').onclick=()=>close(null);
     host.querySelector('.dialog').onclick=e=>{ if(e.target.classList.contains('dialog')) close(null); };
@@ -783,6 +816,8 @@ const LIBS = {
   shp:    'https://cdn.jsdelivr.net/npm/shpjs@4.0.4/dist/shp.min.js',
   geotiff:'https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js',
   xlsx:   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
+  sqljs:  'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js',
+  sqljsWasm: 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.wasm',
 };
 const _libs = {};
 function loadLib(name, globalName){
@@ -790,7 +825,7 @@ function loadLib(name, globalName){
   if(!_libs[name]) _libs[name] = new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=LIBS[name]; s.onload=()=>res(window[globalName]); s.onerror=()=>rej(new Error('Klarte ikke å laste '+name)); document.head.appendChild(s); });
   return _libs[name];
 }
-const FORMAT_LABEL = { geojson:'GeoJSON', kml:'KML', kmz:'KMZ (Google Earth)', gpx:'GPX', shapezip:'Shapefile (zip)', shapeparts:'Shapefile', csv:'CSV/tekst med koordinater', xlsx:'Excel med koordinater', raster:'GeoTIFF (raster)' };
+const FORMAT_LABEL = { geojson:'GeoJSON', kml:'KML', kmz:'KMZ (Google Earth)', gpx:'GPX', shapezip:'Shapefile (zip)', shapeparts:'Shapefile', csv:'CSV/tekst med koordinater', xlsx:'Excel med koordinater', raster:'GeoTIFF (raster)', gpkg:'GeoPackage' };
 const ext = n => (n.toLowerCase().match(/\.([a-z0-9]+)$/)||[])[1]||'';
 const baseName = n => n.replace(/\.[^.]+$/, '');
 
@@ -850,7 +885,7 @@ async function resolveCrs(fc, fileName, known){
 // --- Gjenkjenning -----------------------------------------------------------
 async function sniff(file){
   const e = ext(file.name);
-  const map = {geojson:'geojson', json:'geojson', kml:'kml', kmz:'kmz', gpx:'gpx', csv:'csv', txt:'csv', tsv:'csv', xyz:'csv', xlsx:'xlsx', xls:'xlsx', tif:'raster', tiff:'raster', shp:'shapeparts', dbf:'shapeparts', prj:'shapeparts', cpg:'shapeparts', shx:'shapeparts'};
+  const map = {geojson:'geojson', json:'geojson', kml:'kml', kmz:'kmz', gpx:'gpx', csv:'csv', txt:'csv', tsv:'csv', xyz:'csv', xlsx:'xlsx', xls:'xlsx', tif:'raster', tiff:'raster', gpkg:'gpkg', shp:'shapeparts', dbf:'shapeparts', prj:'shapeparts', cpg:'shapeparts', shx:'shapeparts'};
   if(e==='zip'){
     const JSZip = await loadLib('jszip','JSZip'); const z = await JSZip.loadAsync(await file.arrayBuffer());
     const names = Object.keys(z.files).map(n=>n.toLowerCase());
@@ -1015,80 +1050,171 @@ async function readGeoTIFF(file){
     const r = await dialog({title:'Koordinatsystem for rasteret', text:`«${file.name}» oppgir ${code&&code!==32767?'EPSG:'+code+', som AGIS ikke kjenner':'ikke koordinatsystem'}. Velg riktig:`, fields:[{k:'crs',label:'Koordinatsystem',type:'select',value:VIEW_CRS,options:crsChoices()}], ok:'Importer'});
     if(!r) return null; crs = r.crs;
   }
-  const bbox = img.getBoundingBox(); const W=img.getWidth(), H=img.getHeight();
-  const scale = Math.min(1, 2048/Math.max(W,H)); const w=Math.max(1,Math.round(W*scale)), h=Math.max(1,Math.round(H*scale));
+  const W=img.getWidth(), H=img.getHeight(), fd=img.fileDirectory;
+  // Georeferanse som affin transformasjon: x = a*kol + b*rad + c ; y = d*kol + e*rad + f  (støtter roterte mosaikker)
+  let A;
+  if(fd.ModelTransformation){ const m=fd.ModelTransformation; A=[m[0],m[1],m[3],m[4],m[5],m[7]]; }
+  else { const [sx,sy]=fd.ModelPixelScale, t=fd.ModelTiepoint; A=[sx,0,t[3]-t[0]*sx, 0,-sy,t[4]+t[1]*sy]; }
+  const [a,b,c,d,e,f]=A; const X=(i,j)=>a*i+b*j+c, Y=(i,j)=>d*i+e*j+f;
+  const cx=[X(0,0),X(W,0),X(0,H),X(W,H)], cy=[Y(0,0),Y(W,0),Y(0,H),Y(W,H)];
+  const bbox=[Math.min(...cx),Math.min(...cy),Math.max(...cx),Math.max(...cy)];
+  // Velg passende oversiktsnivå (raskere for store filer)
+  const MAX=4096; let src=img; const n=await tiff.getImageCount();
+  for(let k=1;k<n;k++){ const o=await tiff.getImage(k); if(o.getWidth()>=Math.min(W,MAX) && o.getWidth()<src.getWidth()) src=o; }
+  const scale=Math.min(1, MAX/Math.max(W,H)); const w=Math.max(1,Math.round(W*scale)), h=Math.max(1,Math.round(H*scale));
   const spp = img.getSamplesPerPixel(); const nodata = img.getGDALNoData();
-  const canvas = document.createElement('canvas'); canvas.width=w; canvas.height=h; const ctx=canvas.getContext('2d'); const out=ctx.createImageData(w,h);
-  let legend=null;
+  const sc = document.createElement('canvas'); sc.width=w; sc.height=h; const sctx=sc.getContext('2d'); const out=sctx.createImageData(w,h);
+  let legend=null, kind='rgb';
   if(spp>=3){
-    const rgb = await img.readRasters({width:w, height:h, interleave:true, samples:[0,1,2]});
-    const bits = img.getBitsPerSample(); const div = bits>8 ? (2**bits-1)/255 : 1;
-    for(let i=0,j=0;i<w*h;i++,j+=3){ out.data[i*4]=rgb[j]/div; out.data[i*4+1]=rgb[j+1]/div; out.data[i*4+2]=rgb[j+2]/div; out.data[i*4+3]=(rgb[j]===0&&rgb[j+1]===0&&rgb[j+2]===0)?0:255; }
+    const samples = spp>=4 ? [0,1,2,3] : [0,1,2];
+    const px = await src.readRasters({width:w, height:h, interleave:true, samples});
+    const bits = img.getBitsPerSample(); const div = bits>8 ? (2**bits-1)/255 : 1; const st=samples.length;
+    for(let i=0,j=0;i<w*h;i++,j+=st){ out.data[i*4]=px[j]/div; out.data[i*4+1]=px[j+1]/div; out.data[i*4+2]=px[j+2]/div;
+      out.data[i*4+3]= st===4 ? px[j+3]/div : ((px[j]===0&&px[j+1]===0&&px[j+2]===0)?0:255); }
   } else {
-    const [band] = await img.readRasters({width:w, height:h, samples:[0]});
+    kind='band';
+    const [band] = await src.readRasters({width:w, height:h, samples:[0]});
     const valid=[]; for(let i=0;i<band.length;i+=Math.max(1,Math.floor(band.length/20000))){ const v=band[i]; if(Number.isFinite(v) && v!==nodata && v>-1e30) valid.push(v); }
-    valid.sort((a,b)=>a-b); const lo=valid[Math.floor(valid.length*0.02)]??0, hi=valid[Math.floor(valid.length*0.98)]??1;
-    const isDepth = hi<=0 || (median(valid)<0);    // negative verdier = dybde under havflaten
+    valid.sort((p,q)=>p-q); const lo=valid[Math.floor(valid.length*0.02)]??0, hi=valid[Math.floor(valid.length*0.98)]??1;
+    const isDepth = hi<=0 || (median(valid)<0);
     const ramp = isDepth ? RAMP_DEPTH : RAMP_TERRAIN;
     for(let i=0;i<band.length;i++){ const v=band[i]; if(!Number.isFinite(v)||v===nodata||v<-1e30){ out.data[i*4+3]=0; continue; }
-      const t = isDepth ? (hi - v)/((hi-lo)||1) : (v-lo)/((hi-lo)||1); const [r,g,b]=rampColor(ramp,t); out.data[i*4]=r; out.data[i*4+1]=g; out.data[i*4+2]=b; out.data[i*4+3]=255; }
+      const t = isDepth ? (hi - v)/((hi-lo)||1) : (v-lo)/((hi-lo)||1); const [r,g,bb]=rampColor(ramp,t); out.data[i*4]=r; out.data[i*4+1]=g; out.data[i*4+2]=bb; out.data[i*4+3]=255; }
     legend = {min:lo, max:hi, ramp: isDepth?'depth':'terrain', unit: isDepth?'m dyp':''};
   }
-  ctx.putImageData(out,0,0);
+  sctx.putImageData(out,0,0);
+  // Tegn over i et nord-opp-lerret dersom rasteret er rotert
+  let canvas=sc; const rotated = Math.abs(b)>1e-12 || Math.abs(d)>1e-12;
+  if(rotated){
+    const s=w/W; const ps=Math.sqrt(Math.abs(a*e-b*d))/s;  // pikselstørrelse i utlerretet (meter)
+    let DW=Math.ceil((bbox[2]-bbox[0])/ps), DH=Math.ceil((bbox[3]-bbox[1])/ps); const k=Math.min(1, MAX/Math.max(DW,DH)); DW=Math.ceil(DW*k); DH=Math.ceil(DH*k); const P=ps/k;
+    canvas=document.createElement('canvas'); canvas.width=DW; canvas.height=DH; const dctx=canvas.getContext('2d');
+    dctx.setTransform(a/(s*P), -d/(s*P), b/(s*P), -e/(s*P), (c-bbox[0])/P, (bbox[3]-f)/P);
+    dctx.imageSmoothingQuality='high'; dctx.drawImage(sc,0,0);
+  }
   const png = await new Promise(r=>canvas.toBlob(r,'image/png'));
-  return [{name:baseName(file.name), raster:{png, original:file, extent:bbox, projection:crs, legend, size:[W,H]}}];
+  const res = Math.sqrt(Math.abs(a*e-b*d));
+  return [{name:baseName(file.name), raster:{png, original:file, extent:bbox, projection:crs, legend, size:[W,H], resolution:res, rotated}}];
+}
+
+// --- Mapper: dra og slipp hele mappestrukturer -------------------------------
+const JUNK = n => /^\.|^Thumbs\.db$|\.aux\.xml$|\.ovr$|\.xml$|\.qmd$|\.qml$|\.sld$|\.lock$|-journal$|\.gpkg-(wal|shm)$/i.test(n);
+// Leser filer fra et drop-event, inkludert mapper og undermapper. Returnerer [{file, path}]
+async function collectDropped(dt){
+  const items = dt.items ? [...dt.items].filter(i=>i.kind==='file') : [];
+  const entries = items.map(i=>i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if(!entries.length) return [...(dt.files||[])].map(f=>({file:f, path:f.webkitRelativePath||f.name}));
+  const out=[];
+  const readDir = dir => new Promise((res,rej)=>{ const r=dir.createReader(); const all=[]; const next=()=>r.readEntries(b=>{ if(!b.length) res(all); else { all.push(...b); next(); } }, rej); next(); });
+  async function walk(entry, prefix){
+    if(entry.isFile){ const f = await new Promise((res,rej)=>entry.file(res,rej)); out.push({file:f, path: prefix+f.name}); }
+    else if(entry.isDirectory){ for(const ch of await readDir(entry)) await walk(ch, prefix+entry.name+'/'); }
+  }
+  for(const en of entries) await walk(en, '');
+  return out;
+}
+function filesFromInput(fl){ return [...fl].map(f=>({file:f, path:f.webkitRelativePath||f.name})); }
+
+// GeoPackage (.gpkg) – SQLite med geometri i GPKG-binærformat. Leses med sql.js i nettleseren.
+async function readGPKG(file){
+  if(!window.initSqlJs) await loadLib('sqljs','initSqlJs');
+  const SQL = window._sqljs || (window._sqljs = await initSqlJs({locateFile: f => LIBS.sqljsWasm}));
+  const db = new SQL.Database(new Uint8Array(await file.arrayBuffer()));
+  try{
+    const q = (s,p) => { const st=db.prepare(s); if(p) st.bind(p); const rows=[]; while(st.step()) rows.push(st.getAsObject()); st.free(); return rows; };
+    const layers = q("select c.table_name, g.column_name, g.srs_id, s.organization, s.organization_coordsys_id from gpkg_contents c join gpkg_geometry_columns g on g.table_name=c.table_name left join gpkg_spatial_ref_sys s on s.srs_id=g.srs_id where c.data_type='features'");
+    if(!layers.length) throw new Error('GeoPackage uten vektorlag (rasterlag i GeoPackage støttes ikke ennå)');
+    const wkb = new ol.format.WKB(); const parts=[];
+    for(const L of layers){
+      const epsg = (String(L.organization||'').toUpperCase()==='EPSG' && L.organization_coordsys_id) ? L.organization_coordsys_id : L.srs_id;
+      const crs = (epsg===4326||epsg===4258) ? 'EPSG:4326' : (ensureProjection(epsg) || null);
+      const rows = q(`select * from "${String(L.table_name).replace(/"/g,'""')}"`);
+      const features=[];
+      for(const r of rows){
+        const blob = r[L.column_name]; if(!blob || !blob.length) continue;
+        // GPKG-header: 'GP', versjon, flagg, srs_id, envelope (lengde fra flagg), deretter WKB
+        const flags = blob[3]; const envInd = (flags>>1)&7; const envLen = [0,32,48,48,64][envInd]||0; const off = 8+envLen;
+        let geom; try{ geom = wkb.readGeometry(blob.subarray(off)); }catch(_){ continue; }
+        const g = GeoJSONFmt.writeGeometryObject(geom); if(g.coordinates) g.coordinates = strip3(g.coordinates);
+        const props={}; for(const [k,v] of Object.entries(r)){ if(k===L.column_name || v instanceof Uint8Array || v===null) continue; props[k]=v; }
+        features.push({type:'Feature', geometry:g, properties:props});
+      }
+      parts.push({name: layers.length>1 ? `${baseName(file.name)} – ${L.table_name}` : baseName(file.name), fc:{type:'FeatureCollection',features}, crs});
+    }
+    return parts;
+  } finally { db.close(); }
 }
 
 // --- Hovedflyt ---------------------------------------------------------------
-async function importFiles(fileList){
+// entries: [{file, path}] eller FileList. Filer i undermapper får mappenavnet som lagnavn og grupperes etter toppmappen.
+async function importFiles(input, opts={}){
   if(!S.map){ toast('Åpne et kart først'); return; }
   if(!canEdit()){ toast('Kun administratorer og redigerere kan legge til lag'); return; }
-  const files=[...fileList]; if(!files.length) return;
-  // Shapefil-deler (.shp/.dbf/.prj/.cpg/.shx) med samme navn hører sammen
-  const groups=[]; const shpParts={};
-  for(const f of files){ const e=ext(f.name); if(['shp','dbf','prj','cpg','shx','sbn','sbx'].includes(e)){ (shpParts[baseName(f.name).toLowerCase()] ||= []).push(f); } else groups.push([f]); }
-  Object.values(shpParts).forEach(g=>groups.push(g));
-  let added=0;
-  for(const g of groups){
-    const label = g.length>1 ? baseName(g[0].name) : g[0].name;
+  let entries = Array.isArray(input) ? input : filesFromInput(input);
+  const skipped = entries.filter(e=>JUNK(e.file.name)).length;
+  entries = entries.filter(e=>!JUNK(e.file.name));
+  if(!entries.length){ toast('Fant ingen filer å importere'); return; }
+  // Grupper: shapefil-deler med samme navn i samme mappe hører sammen
+  const dirOf = p => p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '';
+  const groups=[]; const shp={};
+  for(const en of entries){ const e=ext(en.file.name); if(['shp','dbf','prj','cpg','shx','sbn','sbx'].includes(e)){ (shp[dirOf(en.path)+'|'+baseName(en.file.name).toLowerCase()] ||= []).push(en); } else groups.push([en]); }
+  Object.values(shp).forEach(g=>groups.push(g));
+  // Lagnavn: undermappens navn når filen ligger i en mappe, ellers filnavnet. Gruppe = toppmappen.
+  const perDir = {}; groups.forEach(g=>{ const d=dirOf(g[0].path); perDir[d]=(perDir[d]||0)+1; });
+  const nameFor = (g, fallback) => { const d=dirOf(g[0].path); const leaf=d.split('/').pop(); if(!leaf) return fallback; return perDir[d]>1 ? `${leaf} · ${fallback===leaf?'':fallback}`.replace(/ · $/,'') : leaf; };
+  const groupFor = g => { const d=dirOf(g[0].path); return d ? d.split('/')[0] : (opts.group||null); };
+  let added=0, failed=[]; const total=groups.length;
+  for(let gi=0; gi<groups.length; gi++){
+    const g=groups[gi]; const files=g.map(x=>x.file);
+    const label = files.length>1 ? baseName(files[0].name) : files[0].name;
+    const prog = total>1 ? ` (${gi+1}/${total})` : '';
     try{
-      showBusy(`Leser ${label} …`);
-      let kind = g.length>1 ? 'shapeparts' : await sniff(g[0]);
+      showBusy(`Leser ${label}${prog} …`);
+      let kind = files.length>1 ? 'shapeparts' : (ext(files[0].name)==='gpkg' ? 'gpkg' : await sniff(files[0]));
       if(!kind){
         hideBusy();
-        const r = await dialog({title:'Hva slags fil er dette?', text:`Klarte ikke å gjenkjenne «${g[0].name}». Velg format:`, fields:[{k:'kind',label:'Format',type:'select',value:'geojson',options:Object.entries(FORMAT_LABEL).filter(([k])=>k!=='shapeparts')}], ok:'Prøv'});
-        if(!r) continue; kind=r.kind; showBusy(`Leser ${label} …`);
+        const r = await dialog({title:'Hva slags fil er dette?', text:`Klarte ikke å gjenkjenne «${g[0].path}». Velg format, eller hopp over:`, fields:[{k:'kind',label:'Format',type:'select',value:'skip',options:[['skip','Hopp over filen'],...Object.entries(FORMAT_LABEL).filter(([k])=>k!=='shapeparts')]}], ok:'Fortsett'});
+        if(!r || r.kind==='skip') continue; kind=r.kind; showBusy(`Leser ${label}${prog} …`);
       }
       let parts;
-      if(kind==='geojson') parts = await readGeoJSON(g[0]);
-      else if(kind==='kml') parts = await readKML(await g[0].text(), baseName(g[0].name));
-      else if(kind==='kmz') parts = await readKMZ(g[0]);
-      else if(kind==='gpx') parts = await readGPX(g[0]);
-      else if(kind==='shapezip') parts = await readShapeZip(g[0]);
-      else if(kind==='shapeparts') parts = await readShapeParts(g);
-      else if(kind==='zipgeojson'){ const JSZip=await loadLib('jszip','JSZip'); const z=await JSZip.loadAsync(await g[0].arrayBuffer()); const n=Object.keys(z.files).find(x=>/\.(geo)?json$/i.test(x)); parts = await readGeoJSON(new File([await z.file(n).async('blob')], n)); }
-      else if(kind==='csv'){ hideBusy(); parts = await readCSV(g[0]); }
-      else if(kind==='xlsx'){ hideBusy(); parts = await readXLSX(g[0]); }
-      else if(kind==='raster') parts = await readGeoTIFF(g[0]);
+      if(kind==='geojson') parts = await readGeoJSON(files[0]);
+      else if(kind==='gpkg') parts = await readGPKG(files[0]);
+      else if(kind==='kml') parts = await readKML(await files[0].text(), baseName(files[0].name));
+      else if(kind==='kmz') parts = await readKMZ(files[0]);
+      else if(kind==='gpx') parts = await readGPX(files[0]);
+      else if(kind==='shapezip') parts = await readShapeZip(files[0]);
+      else if(kind==='shapeparts') parts = await readShapeParts(files);
+      else if(kind==='zipgeojson'){ const JSZip=await loadLib('jszip','JSZip'); const z=await JSZip.loadAsync(await files[0].arrayBuffer()); const n=Object.keys(z.files).find(x=>/\.(geo)?json$/i.test(x)); parts = await readGeoJSON(new File([await z.file(n).async('blob')], n)); }
+      else if(kind==='csv'){ hideBusy(); parts = await readCSV(files[0]); }
+      else if(kind==='xlsx'){ hideBusy(); parts = await readXLSX(files[0]); }
+      else if(kind==='raster') parts = await readGeoTIFF(files[0]);
       hideBusy();
       if(!parts) continue;
+      const group = groupFor(g);
       for(const part of parts){
-        if(part.raster){ await addRasterLayer(part); added++; continue; }
+        const typeLabel = part.raster ? 'mosaikk' : 'vektor';
+        part.name = g[0].path.includes('/') ? nameFor(g, typeLabel) : part.name;
+        if(part.raster){ await addRasterLayer(part, group); added++; continue; }
         if(!part.resolved){ const crs = await resolveCrs(part.fc, part.name, part.crs); if(!crs) continue; part.fc = reprojectFC(part.fc, crs); }
-        const n = await addVectorLayer(part.name, part.fc);
+        const n = await addVectorLayer(part.name, part.fc, group);
         if(n) added++;
       }
-    }catch(e){ hideBusy(); console.error(e); await dialog({title:'Kunne ikke importere', text:`«${label}»: ${e.message||e}`, fields:[], ok:'OK'}); }
+    }catch(e){ hideBusy(); console.error(e); failed.push(`${g[0].path}: ${e.message||e}`); }
   }
+  hideBusy();
   if(added){ renderPanel(); fitToData(); }
+  if(failed.length) await dialog({title:`${failed.length} fil${failed.length>1?'er':''} kunne ikke importeres`, text: failed.slice(0,12).join('\n') + (failed.length>12?`\n… og ${failed.length-12} til`:''), fields:[], ok:'OK'});
+  if(total>1) toast(`${added} lag lagt til${skipped?`, ${skipped} hjelpefiler hoppet over`:''}`);
+  return added;
 }
-async function addVectorLayer(name, fc){
+
+async function addVectorLayer(name, fc, group){
   fc.features = (fc.features||[]).filter(f=>f && f.geometry);
   if(!fc.features.length){ toast(`«${name}» inneholder ingen geometrier`); return 0; }
   const {xs, ys} = sampleCoords(fc);
   if(!looksGeographic(xs, ys)) throw new Error('Koordinatene ble ikke gyldige grader etter omregning – sjekk valgt koordinatsystem');
   const keys = new Set(); fc.features.slice(0,50).forEach(f=>Object.keys(f.properties||{}).forEach(k=>keys.add(k.toLowerCase())));
-  const style = {color:randomColor(), fillOpacity:.25, width:2, radius:6};
+  const style = {color:randomColor(), fillOpacity:.25, width:2, radius:6}; if(group) style.group=group;
   if(keys.has('tilstand')) style.colorBy = {prop:'tilstand', map:TILSTAND, legend:{1:'Tilstand 1',2:'Tilstand 2',3:'Tilstand 3',4:'Tilstand 4'}};
   const l = await store.createLayer(S.map.id,{name, kind:'vector', style, sort_order:S.layers.length});
   let n=0; for(let i=0;i<fc.features.length;i+=500){ showBusy(`Lagrer ${name} (${Math.min(i+500,fc.features.length)}/${fc.features.length}) …`); n += await store.importGeojson(l.id, {type:'FeatureCollection', features:fc.features.slice(i,i+500)}); }
@@ -1097,38 +1223,58 @@ async function addVectorLayer(name, fc){
   toast(`«${name}»: ${n} objekter importert`);
   return n;
 }
-async function addRasterLayer(part){
+async function addRasterLayer(part, group){
   const r = part.raster; showBusy(`Laster opp ${part.name} …`);
   const id = uuid();
   const pngPath = await store.uploadFile(`${S.map.id}/${id}.png`, r.png, 'image/png');
   const tifPath = await store.uploadFile(`${S.map.id}/${id}-${r.original.name.replace(/[^\w.\-]/g,'_')}`, r.original, 'image/tiff');
-  const l = await store.createLayer(S.map.id,{name:part.name, kind:'raster', source:{png:pngPath, tif:tifPath, extent:r.extent, projection:r.projection, legend:r.legend, size:r.size}, style:{opacity:.9}, sort_order:S.layers.length});
+  const l = await store.createLayer(S.map.id,{name:part.name, kind:'raster', source:{png:pngPath, tif:tifPath, extent:r.extent, projection:r.projection, legend:r.legend, size:r.size, resolution:r.resolution}, style:{opacity:.9, ...(group?{group}:{})}, sort_order:S.layers.length});
   hideBusy(); S.layers.push(l); await renderLayer(l);
-  toast(`«${part.name}» lagt til (${r.size[0]}×${r.size[1]} px, ${r.projection})`);
+  toast(`«${part.name}» lagt til (${r.size[0]}×${r.size[1]} px, ${r.resolution<0.1?(r.resolution*1000).toFixed(1)+' mm':r.resolution.toFixed(2)+' m'} oppløsning, ${r.projection})`);
 }
 function showBusy(msg){ let b=$('#busy'); if(!b){ b=document.createElement('div'); b.id='busy'; b.className='toast busy'; document.body.appendChild(b); } b.textContent=msg; b.hidden=false; }
 function hideBusy(){ const b=$('#busy'); if(b) b.hidden=true; }
 
+function canDropHere(){ return S.map ? canEdit() : !!(S.user && S.user.staff); }
+// Slipp filer/mapper i kartlisten → nytt kart for (ny eller eksisterende) kunde
+async function newMapFromFiles(list){
+  if(!(S.user && S.user.staff)){ toast('Kun ansatte kan opprette kart'); return; }
+  list = list.filter(e=>!JUNK(e.file.name)); if(!list.length){ toast('Fant ingen filer å importere'); return; }
+  const top = list[0].path.includes('/') ? list[0].path.split('/')[0] : baseName(list[0].file.name);
+  const nDirs = new Set(list.map(e=>e.path.includes('/')?e.path.slice(0,e.path.lastIndexOf('/')):'')).size;
+  let customers=[]; try{ customers=[...new Set((await store.listMaps()).map(m=>m.customer).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'nb')); }catch(_){}
+  const r = await dialog({title:'Nytt kart fra filer', text:`${list.length} filer${nDirs>1?` i ${nDirs} mapper`:''}. Velg en eksisterende kunde, eller skriv navnet på en ny.`, fields:[
+    {k:'customer',label:'Kunde',type:'datalist',value:'',options:customers},
+    {k:'title',label:'Kartnavn',value:top},
+    {k:'restricted',label:'Tilgang',type:'checkbox',value:true,hint:'Begrenset kart – bare personer du legger til ser det, heller ikke andre ansatte. Brukes for gradert eller sensitiv data. Visninger logges.'}], ok:'Opprett og importer'});
+  if(!r || !r.title) return;
+  const m = await store.createMap({customer:r.customer||null, title:r.title, restricted:!!r.restricted, crs:VIEW_CRS});
+  await openMap(m.id);
+  await importFiles(list);
+  let ext=null; S.layers.forEach(l=>{ const e=layerExtent(l); if(e) ext = ext ? ol.extent.extend(ext,e) : e.slice(); });
+  if(ext){ const [lng,lat]=toLonLat(ol.extent.getCenter(ext),VIEW_CRS); const crs=crsFor(lng,lat);
+    await store.updateMap(m.id,{crs, center_lng:lng, center_lat:lat}).catch(()=>{}); if(crs!==VIEW_CRS) await setMapCrs(crs); await fitToData(); }
+}
 // Dra og slipp hvor som helst over kartet (kun for redigerere)
 function initDropZone(){
   const wrap = $('.mapwrap'); const ov = $('#dropOverlay'); let depth=0;
   const hasFiles = e => e.dataTransfer && [...(e.dataTransfer.types||[])].includes('Files');
-  document.addEventListener('dragenter', e=>{ if(!hasFiles(e)||!S.map||!canEdit()) return; depth++; ov.hidden=false; });
+  document.addEventListener('dragenter', e=>{ if(!hasFiles(e)||!canDropHere()) return; depth++; ov.hidden=false; $('#dropOverlay b').textContent = S.map ? 'Slipp filer eller mapper for å legge dem til som lag' : 'Slipp filer eller mapper for å lage et nytt kart'; });
   document.addEventListener('dragleave', e=>{ if(!hasFiles(e)) return; depth=Math.max(0,depth-1); if(!depth) ov.hidden=true; });
   document.addEventListener('dragover', e=>{ if(hasFiles(e)) e.preventDefault(); });
-  document.addEventListener('drop', e=>{ if(!hasFiles(e)) return; e.preventDefault(); depth=0; ov.hidden=true; if($('#dialogHost').children.length) return; importFiles(e.dataTransfer.files); });
+  document.addEventListener('drop', e=>{ if(!hasFiles(e)) return; e.preventDefault(); depth=0; ov.hidden=true; if($('#dialogHost').children.length) return; const dt=e.dataTransfer; collectDropped(dt).then(list=> S.map ? importFiles(list) : newMapFromFiles(list)).catch(err); });
 }
 
 // ---- Dialog / toast / hjelpere -------------------------------------------
 function dialog({title, fields, ok, text, extra}){
   return new Promise(res=>{
     const host=$('#dialogHost');
-    host.innerHTML=`<div class="dialog" role="dialog" aria-modal="true"><form class="box"><h3>${esc(title)}</h3>${text?`<p class="hint">${esc(text)}</p>`:''}${fields.map(f=>`<div class="field"><label for="f_${f.k}">${esc(f.label)}</label>${f.type==='textarea'?`<textarea id="f_${f.k}" name="${f.k}" rows="3">${esc(f.value)}</textarea>`:f.type==='select'?`<select id="f_${f.k}" name="${f.k}">${f.options.map(o=>`<option value="${esc(o[0])}" ${o[0]==f.value?'selected':''}>${esc(o[1])}</option>`).join('')}</select>`:`<input id="f_${f.k}" name="${f.k}" type="${f.type||'text'}" value="${esc(f.value)}">`}</div>`).join('')}<div class="row" style="justify-content:space-between;margin-top:6px"><div>${extra||''}</div><div class="row"><button type="button" class="btn" id="dlgCancel">Avbryt</button><button type="submit" class="btn primary">${esc(ok)}</button></div></div></form></div>`;
+    host.innerHTML=`<div class="dialog" role="dialog" aria-modal="true"><form class="box"><h3>${esc(title)}</h3>${text?`<p class="hint">${esc(text)}</p>`:''}${fields.map(f=>`<div class="field"><label for="f_${f.k}">${esc(f.label)}</label>${f.type==='textarea'?`<textarea id="f_${f.k}" name="${f.k}" rows="3">${esc(f.value)}</textarea>`:f.type==='select'?`<select id="f_${f.k}" name="${f.k}">${f.options.map(o=>`<option value="${esc(o[0])}" ${o[0]==f.value?'selected':''}>${esc(o[1])}</option>`).join('')}</select>`:f.type==='checkbox'?`<label class="chk"><input id="f_${f.k}" name="${f.k}" type="checkbox" ${f.value?'checked':''}> ${esc(f.hint||'')}</label>`:`<input id="f_${f.k}" name="${f.k}" type="${f.type==='datalist'?'text':(f.type||'text')}" value="${esc(f.value)}" ${f.type==='datalist'?`list="dl_${f.k}" autocomplete="off"`:''}>${f.type==='datalist'?`<datalist id="dl_${f.k}">${(f.options||[]).map(o=>`<option value="${esc(o)}">`).join('')}</datalist>`:''}`}</div>`).join('')}<div class="row" style="justify-content:space-between;margin-top:6px"><div>${extra||''}</div><div class="row"><button type="button" class="btn" id="dlgCancel">Avbryt</button><button type="submit" class="btn primary">${esc(ok)}</button></div></div></form></div>`;
     const form=host.querySelector('form'); const first=form.querySelector('input,textarea,select'); if(first) first.focus();
     const close=v=>{ host.innerHTML=''; res(v); };
     host.querySelector('#dlgCancel').onclick=()=>close(null);
     const del=host.querySelector('#dlgDelete'); if(del) del.onclick=()=>close('__delete');
-    form.onsubmit=e=>{ e.preventDefault(); const o={}; fields.forEach(f=>o[f.k]=form.elements[f.k].value); close(fields.length?o:true); };
+    form.onsubmit=e=>{ e.preventDefault(); const o={}; fields.forEach(f=>o[f.k]= f.type==='checkbox' ? form.elements[f.k].checked : form.elements[f.k].value); close(fields.length?o:true); };
     host.querySelector('.dialog').onclick=e=>{ if(e.target.classList.contains('dialog')) close(null); };
   });
 }
@@ -1144,6 +1290,8 @@ async function openMap(id){
   if(!m){ toast('Fant ikke kartet, eller du mangler tilgang'); history.replaceState(null,'','?'); return renderMapsList(); }
   S.layers.forEach(removeLayerFromMap); closePopup(); setMode(null);
   S.map=m; S.layers=[]; S.comments=[]; S.activeLayerId=null; S.tab='layers';
+  if(m.restricted) store.logAccess(m.id,'open').catch(()=>{});
+  $('#lockBadge').hidden = !m.restricted;
   if(!EMBED) history.replaceState(null,'',`?map=${id}`);
   $('#mapTitle').value=m.title; $('#mapTitle').readOnly=true;
   try{ [S.layers,S.comments,S.access] = await Promise.all([store.listLayers(id), store.listComments(id), store.listAccess(id).catch(()=>[])]); }catch(e){ err(e); }
@@ -1175,7 +1323,7 @@ async function setMapCrs(crs){
 }
 
 document.querySelectorAll('#drawTools button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
-$('#brandLink').onclick=e=>{ e.preventDefault(); S.layers.forEach(removeLayerFromMap); S.layers=[]; S.comments=[]; renderComments(); closePopup(); setMode(null); S.map=null; history.replaceState(null,'','?'); $('#drawTools').hidden=true; renderMapsList(); if(window.innerWidth<=760) $('#panel').classList.add('open'); };
+$('#brandLink').onclick=e=>{ e.preventDefault(); $('#lockBadge').hidden=true; S.layers.forEach(removeLayerFromMap); S.layers=[]; S.comments=[]; renderComments(); closePopup(); setMode(null); S.map=null; history.replaceState(null,'','?'); $('#drawTools').hidden=true; renderMapsList(); if(window.innerWidth<=760) $('#panel').classList.add('open'); };
 
 async function boot(){
   if(EMBED) $('#app').classList.add('embed');
