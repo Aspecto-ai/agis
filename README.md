@@ -9,7 +9,7 @@ Innlogging med Microsoft Entra ID (MFA håndheves i Entra). Frittstående fra Mi
 | Mappe/fil | Hva |
 |---|---|
 | `web/index.html` | Hele appen (én fil). OpenLayers 10 + proj4 + supabase-js fra CDN. Demo-modus når konfigurasjonen er tom. |
-| `supabase/migrations/20261020_aspecto_kart.sql` | Databaseskjema: PostGIS, tabeller `kart_*`, RLS, RPC-funksjoner, storage-bucket. |
+| `supabase/migrations/20261020_aspecto_kart.sql` + `20261023_agis_crs_raster.sql` | Databaseskjema: PostGIS, tabeller `kart_*`, RLS, RPC-funksjoner, storage-bucket. |
 | `supabase/functions/kart/index.ts` | Valgfri: server `index.html` som Supabase Edge Function (rask demo-hosting). |
 
 ## Funksjoner i v1
@@ -101,13 +101,29 @@ Private kart kan også bygges inn, men innlogging skjer ikke inne i rammen (Micr
 
 ## Koordinatsystem – regler
 
-| Situasjon | CRS |
-|---|---|
-| Kartets senter sør for 65°N | EPSG:25832 – EUREF89 UTM 32N |
-| Kartets senter nord for 65°N | EPSG:25833 – EUREF89 UTM 33N |
-| Overstyring | Per kart, lagres i `kart_maps.crs` |
+| Region (kartets senter) | CRS | Kartgrunnlag |
+|---|---|---|
+| Sør-Norge, sør for 65°N | EPSG:25832 – EUREF89 UTM 32N | Kartverket topo (WMS) |
+| Nord-Norge, 65°N og nordover | EPSG:25833 – EUREF89 UTM 33N | Kartverket topo |
+| Finnmark, 68°N og nordover, øst for 22°Ø | EPSG:25835 – EUREF89 UTM 35N | Kartverket topo |
+| Færøyane | EPSG:5316 – ETRS89 / Faroe TM | OpenStreetMap |
+| Skottland / Storbritannia | EPSG:27700 – British National Grid | OpenStreetMap |
 
-Grensen endres i én konstant (`CRS_SPLIT_LAT`) i `web/index.html`. Alle data lagres i databasen som WGS84 (EPSG:4326) og reprojiseres ved visning og nedlasting; GeoJSON-opplasting skal være i EPSG:4326 (standard GeoJSON).
+Overstyres per kart under «Deling → Koordinatsystem» (lagres i `kart_maps.crs`). Grensene er konstantene `CRS_SPLIT_LAT` og `FINNMARK_LON` i `web/index.html`. Kartverket topo dekker kun Norge; for Færøyane og Skottland finnes ingen åpen topo-WMS uten nøkkel, derfor OpenStreetMap. Ordnance Survey kan legges inn senere med API-nøkkel fra OS Data Hub. EPSG:27700 bruker 7-parameter Helmert-transformasjon (±2–5 m), siden OSTN15-gridet ikke kan brukes i nettleseren. Alle data lagres som WGS84 (EPSG:4326) og regnes om ved visning.
+
+## Legg til lag – dra og slipp
+
+Redigerere kan dra filer rett inn i kartet eller i «Legg til lag». AGIS gjenkjenner formatet og koordinatsystemet selv og spør i popup bare når noe er uklart:
+
+| Format | Koordinatsystem |
+|---|---|
+| GeoJSON (.geojson/.json) | Fra `crs`-feltet; ellers grader, eller spør ved projiserte koordinater |
+| KML / KMZ / GPX | Alltid WGS84 |
+| Shapefil (.zip, eller .shp+.dbf+.prj sluppet sammen) | Fra .prj; spør hvis .prj mangler |
+| CSV / TXT / Excel (.xlsx) | Finner kolonner som Breddegrad/Lengdegrad, Lat/Lon, Nord/Øst, N/E. Forstår desimalgrader, grader-minutter (`66°06,600'N`), komma som desimaltegn og `;`-separert. Kolonne «sone» gir UTM-sone per rad. Spør om kolonner og koordinatsystem når det er uklart |
+| GeoTIFF (.tif) | Fra GeoKeys; spør hvis ukjent. Én-bånds rastere (batymetri) fargelegges med dybdeskala, RGB vises som bilde. Originalen lagres i Storage og kan lastes ned |
+
+Lag med attributtet `tilstand` får automatisk MOM-B-farger (tilstand 1–4).
 
 ## Dataflyt fra survey
 
