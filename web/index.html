@@ -108,6 +108,9 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
 .comment.resolved{border-left-color:var(--ok);opacity:.7}
 .comment .who{font-size:11px;color:var(--muted);font-family:var(--mono)}
 .access{display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.custgroup{margin-bottom:14px}
+.custname{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:4px 0 6px}
+.custname span{text-transform:none;letter-spacing:0;font-weight:400}
 .welcome{text-align:center;padding:18px 6px 10px}
 .welcome img{width:70%;max-width:220px;height:auto}
 .welcome h3{margin:14px 0 4px;font-size:15px;letter-spacing:.04em}
@@ -304,8 +307,8 @@ function demoData(){
   Object.values(features).forEach(fc=>fc.features.forEach(f=>{f.properties._id=f.properties._id||uuid(); f.id=f.properties._id;}));
   return {
     maps:[
-      {id:mapA, title:'Kvalvika – MOM-B og MBES (demo)', description:'Fiktiv lokalitet. Viser hvordan surveydata, stasjoner og tilstand presenteres for kunde.', owner_email:'demo@aspecto.no', is_public:true, crs:'EPSG:25833', center_lng:c[0], center_lat:c[1], zoom:13.2, updated_at:'2026-10-18T09:00:00Z'},
-      {id:mapB, title:'Håkabø – lokalitetsutvikling (demo)', description:'Tomt arbeidskart for ny lokalitet.', owner_email:'demo@aspecto.no', is_public:false, crs:'EPSG:25833', center_lng:12.42, center_lat:66.025, zoom:13, updated_at:'2026-10-10T09:00:00Z'},
+      {id:mapA, customer:'Demokunde AS', title:'Kvalvika – MOM-B og MBES (demo)', description:'Fiktiv lokalitet. Viser hvordan surveydata, stasjoner og tilstand presenteres for kunde.', owner_email:'demo@aspecto.no', is_public:true, crs:'EPSG:25833', center_lng:c[0], center_lat:c[1], zoom:13.2, updated_at:'2026-10-18T09:00:00Z'},
+      {id:mapB, customer:'Demokunde AS', title:'Håkabø – lokalitetsutvikling (demo)', description:'Tomt arbeidskart for ny lokalitet.', owner_email:'demo@aspecto.no', is_public:false, crs:'EPSG:25833', center_lng:12.42, center_lat:66.025, zoom:13, updated_at:'2026-10-10T09:00:00Z'},
     ],
     layers, features,
     comments:[{id:uuid(), map_id:mapA, lng:c[0]+0.009, lat:c[1]+0.0005, body:'Stasjon B8 er tilstand 4 – bør følges opp med ny prøvetaking etter brakklegging.', author:'kelsey@aspecto.no', resolved:false, created_at:'2026-10-15T10:12:00Z'},
@@ -662,9 +665,10 @@ async function renderMapsList(){
   if(!S.user && !DEMO){ body.innerHTML='<div class="welcome"><img src="logo-navy.png" alt="Aspecto"><h3>AGIS – AspectoGIS</h3><p>Kartportal for surveydata, lokaliteter og miljøundersøkelser.</p></div><div class="notice">Logg inn med Microsoft-kontoen din for å se kartene dine. Kunder bruker samme innlogging (gjestekonto i Aspecto).</div>'; return; }
   let maps=[]; try{ maps=await store.listMaps(); }catch(e){ body.innerHTML=`<div class="notice">Kunne ikke hente kart: ${esc(e.message)}</div>`; return; }
   body.innerHTML = (DEMO?'<div class="notice">Demo-modus: data lagres ikke. AGIS kobles til Supabase i konfigurasjonen for drift.</div>':'') +
-    (maps.length? maps.map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small></button>`).join('') : '<div class="hint">Ingen kart ennå.</div>');
+    (maps.length ? (()=>{ const groups={}; maps.forEach(m=>{ (groups[m.customer||'Uten kunde'] ||= []).push(m); });
+      return Object.keys(groups).sort((a,b)=> a==='Uten kunde' ? 1 : b==='Uten kunde' ? -1 : a.localeCompare(b,'nb')).map(c=>`<div class="custgroup"><h3 class="custname">${esc(c)}<span>${groups[c].length} kart</span></h3>${groups[c].map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small></button>`).join('')}</div>`).join(''); })() : '<div class="hint">Ingen kart ennå.</div>');
   body.querySelectorAll('.mapcard').forEach(b=>b.onclick=()=>openMap(b.dataset.id));
-  const nm=$('#newMap'); if(nm) nm.onclick=async()=>{ const r=await dialog({title:'Nytt kart',fields:[{k:'title',label:'Tittel',value:''},{k:'description',label:'Beskrivelse',value:'',type:'textarea'}],ok:'Opprett'}); if(!r||!r.title) return; const [lng,lat]=toLonLat(view.getCenter(),VIEW_CRS); const m=await store.createMap({title:r.title,description:r.description,center_lng:lng,center_lat:lat,zoom:view.getZoom(),crs:VIEW_CRS}); openMap(m.id); };
+  const nm=$('#newMap'); if(nm) nm.onclick=async()=>{ const r=await dialog({title:'Nytt kart',fields:[{k:'customer',label:'Kunde',value:''},{k:'title',label:'Tittel',value:''},{k:'description',label:'Beskrivelse',value:'',type:'textarea'}],ok:'Opprett'}); if(!r||!r.title) return; if(!r.customer) delete r.customer; const [lng,lat]=toLonLat(view.getCenter(),VIEW_CRS); const m=await store.createMap({customer:r.customer,title:r.title,description:r.description,center_lng:lng,center_lat:lat,zoom:view.getZoom(),crs:VIEW_CRS}); openMap(m.id); };
 }
 function renderPanel(){
   if(!S.map) return renderMapsList();
@@ -702,7 +706,7 @@ function renderPanel(){
     const embed = `<iframe src="${link}&embed=1" width="100%" height="560" style="border:0;border-radius:8px" loading="lazy" allowfullscreen></iframe>`;
     body.innerHTML = `
       ${canEdit()?`<div class="field"><label><input type="checkbox" id="isPublic" ${S.map.is_public?'checked':''}> Offentlig kart (alle med lenken kan se, uten innlogging)</label><div class="hint">Skru på for kart som skal vises åpent på aspecto.no.</div></div>`:''}
-      <div class="section"><h3>Lenke</h3><div class="row"><input class="mono" id="shareLink" value="${esc(link)}" readonly style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><button class="btn small" id="copyLink">Kopier</button></div></div>
+      ${S.map.customer?`<div class="notice">Kunde: <b>${esc(S.map.customer)}</b></div>`:''}<div class="section"><h3>Lenke</h3><div class="row"><input class="mono" id="shareLink" value="${esc(link)}" readonly style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><button class="btn small" id="copyLink">Kopier</button></div></div>
       <div class="section"><h3>Innbygging på nettside</h3><pre class="embed" id="embedCode">${esc(embed)}</pre><button class="btn small" id="copyEmbed">Kopier kode</button><div class="hint" style="margin-top:6px">Innlogging skjer ikke inne i rammen – kart som bygges inn bør være offentlige, ellers vises en «Åpne i AGIS»-knapp.</div></div>
       ${canEdit()?`<div class="section"><h3>Tilgang per e-post</h3><div id="accessList">${S.access.map(a=>`<div class="access"><span>${esc(a.email)} <span class="pill">${a.role==='editor'?'redigerer':'leser'}</span></span><button class="iconbtn" data-email="${esc(a.email)}" title="Fjern">${ICON.trash}</button></div>`).join('')||'<div class="hint">Ingen eksterne. Ansatte (@'+esc(CFG.staffDomain||'aspecto.no')+') har alltid tilgang.</div>'}</div>
         <div class="row" style="margin-top:8px"><input id="accEmail" placeholder="kunde@firma.no" type="email" style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><select id="accRole" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><option value="viewer">Leser</option><option value="editor">Redigerer</option></select><button class="btn small" id="accAdd">Legg til</button></div>
@@ -714,7 +718,7 @@ function renderPanel(){
     const aa=$('#accAdd'); if(aa) aa.onclick=async()=>{ const em=$('#accEmail').value.trim().toLowerCase(); if(!em.includes('@')) return; await store.setAccess(S.map.id,em,$('#accRole').value); S.access=await store.listAccess(S.map.id); renderPanel(); };
     body.querySelectorAll('[data-email]').forEach(b=>b.onclick=async()=>{ await store.removeAccess(S.map.id,b.dataset.email); S.access=await store.listAccess(S.map.id); renderPanel(); });
     const cs=$('#crsSel'); if(cs) cs.onchange=()=>setMapCrs(cs.value);
-    const em=$('#editMeta'); if(em) em.onclick=async()=>{ const r=await dialog({title:'Rediger kart',fields:[{k:'title',label:'Tittel',value:S.map.title},{k:'description',label:'Beskrivelse',value:S.map.description||'',type:'textarea'}],ok:'Lagre'}); if(!r) return; Object.assign(S.map, await store.updateMap(S.map.id,r)); $('#mapTitle').value=S.map.title; renderPanel(); };
+    const em=$('#editMeta'); if(em) em.onclick=async()=>{ const r=await dialog({title:'Rediger kart',fields:[{k:'customer',label:'Kunde',value:S.map.customer||''},{k:'title',label:'Tittel',value:S.map.title},{k:'description',label:'Beskrivelse',value:S.map.description||'',type:'textarea'}],ok:'Lagre'}); if(!r) return; if(!r.customer) r.customer=null; Object.assign(S.map, await store.updateMap(S.map.id,r)); $('#mapTitle').value=S.map.title; renderPanel(); };
     const dm=$('#delMap'); if(dm) dm.onclick=async()=>{ const ok=await dialog({title:`Slette «${S.map.title}»?`,fields:[],ok:'Slett kartet',text:'Alle lag, objekter og kommentarer slettes.'}); if(!ok) return; await store.deleteMap(S.map.id); history.replaceState(null,'','?'); boot(); };
   }
 }
