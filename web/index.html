@@ -423,6 +423,8 @@ const TOPO_WMS = 'https://wms.geonorge.no/skwms1/wms.topo';
 const CRS_SPLIT_LAT = 65.0;      // ≈ fylkesgrensa Trøndelag/Nordland, like nord for Rørvik
 const FINNMARK_LON = 22.0;       // ≈ grensa Troms/Finnmark (Kvænangen/Loppa)
 const NOR_CRS = ['EPSG:25832','EPSG:25833','EPSG:25835'];
+// AUV-mosaikker har mm-oppløsning (f.eks. 2,5 mm). Zoom 25 ≈ 0,5 mm per skjermpiksel i UTM-visningen.
+const MAX_ZOOM = 25;
 const CRS = {
   'EPSG:25832': {label:'EPSG:25832', name:'EUREF89 UTM sone 32N', region:'Sør-Norge', base:'topo',
     def:'+proj=utm +zone=32 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs', bbox:[-15,50,45,84]},
@@ -517,7 +519,7 @@ function initMap(){
   commentSource = new VectorSource(); commentLayer = new VectorLayer({source:commentSource, style:commentStyle, zIndex:95});
   popupOverlay = new Overlay({ element:$('#popup'), positioning:'bottom-center', offset:[0,-6], stopEvent:true, autoPan:{animation:{duration:200}} });
   map = new OLMap({ target:'map', layers:[draftLayer, commentLayer], overlays:[popupOverlay], controls:[new ol.control.ScaleLine({units:'metric'})],
-    view: new View({ projection:VIEW_CRS, center: fromLonLat([14.5,66.5], VIEW_CRS), zoom:6, maxZoom:20, constrainResolution:false }) });
+    view: new View({ projection:VIEW_CRS, center: fromLonLat([14.5,66.5], VIEW_CRS), zoom:6, maxZoom:MAX_ZOOM, constrainResolution:false }) });
   setViewCrs(VIEW_CRS, [17,65], 5, NORWAY_BBOX);
   map.on('pointermove', e => { if(e.dragging) return; const [x,y]=e.coordinate; $('#coords').textContent = fmtCoord(x,y); const hit = !S.mode && map.hasFeatureAtPixel(e.pixel, {layerFilter: l=>l!==draftLayer}); map.getTargetElement().style.cursor = hit?'pointer':''; });
   map.on('singleclick', onMapClick);
@@ -533,7 +535,7 @@ function setViewCrs(crs, centerLonLat, zoom, fitExtent){
     ? wmsLayer(TOPO_WMS, 'topo', {zIndex:0, transparent:false, format:'image/png', attrib:'© Kartverket'})
     : xyzLayer(['https://tile.openstreetmap.org/{z}/{x}/{y}.png'], {zIndex:0, maxZoom:19});
   map.addLayer(topoLayer);
-  view = new View({ projection:crs, extent: c.extent, center: fromLonLat(centerLonLat, crs), zoom: zoom ?? 12, maxZoom:20 });
+  view = new View({ projection:crs, extent: c.extent, center: fromLonLat(centerLonLat, crs), zoom: zoom ?? 12, maxZoom:MAX_ZOOM });
   map.setView(view);
   if(fitExtent) view.fit(transformExtent(fitExtent,'EPSG:4326',crs,16), {padding:[20,20,20,20]});
   view.on('change:center', saveView); view.on('change:resolution', saveView);
@@ -563,8 +565,12 @@ async function renderLayer(l){
     const s=l.source; if(s.projection) ensureProjection(s.projection);
     await loadLib('geotiff','GeoTIFF');
     const url = await store.cogUrl(l.id);
+    // WGS 84 / UTM (326xx) og EUREF89 / UTM (258xx) i samme sone er like i AGIS sin proj4-definisjon.
+    // Da tegnes rasteret i kartets system uten omprojisering, piksel for piksel – ingen resampling.
+    const sameZone = /^EPSG:326(\d\d)$/.exec(s.projection||''), viewZone = /^EPSG:258(\d\d)$/.exec(VIEW_CRS||'');
+    const proj = (sameZone && viewZone && sameZone[1]===viewZone[1]) ? VIEW_CRS : s.projection;
     const src = new ol.source.GeoTIFF({ sources:[{ url, nodata: s.nodata ?? 0 }], convertToRGB:'auto', normalize:true, interpolate:true,
-      sourceOptions:{ allowFullFile:false, cacheSize:200 }, ...(s.projection?{projection:s.projection}:{}) });
+      sourceOptions:{ allowFullFile:false, cacheSize:500 }, ...(proj?{projection:proj}:{}) });
     l._ol = new ol.layer.WebGLTile({ source:src, zIndex:z, opacity:l.style?.opacity ?? 1, visible:l.visible!==false });
   } else if(l.kind==='wms'){
     const s=l.source; l._ol = wmsLayer(s.url, s.layers, {version:s.version, format:s.format, projections:s.projections, opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
