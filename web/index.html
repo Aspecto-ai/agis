@@ -391,6 +391,7 @@ class SupabaseStore {
   async uploadFile(path, blob, type){ const {error}=await this.sb.storage.from('kart-filer').upload(path, blob, {contentType:type, upsert:true}); if(error) throw error; return path; }
   async fileUrl(path){ const {data,error}=await this.sb.storage.from('kart-filer').createSignedUrl(path, 60*60*12); if(error) throw error; return data.signedUrl; }
   async removeFiles(paths){ await this.sb.storage.from('kart-filer').remove(paths.filter(Boolean)); }
+  async cogUrl(layerId){ const {data,error}=await this.sb.functions.invoke('azure-cog',{body:{layer_id:layerId}}); if(error) throw error; if(data?.error) throw new Error(data.error); return data.url; }
   async logAccess(mapId, action){ return this._q(this.sb.rpc('kart_log',{p_map:mapId, p_action:action})); }
 }
 
@@ -557,6 +558,14 @@ async function renderLayer(l){
     const url = await store.fileUrl(s.png);
     l._ol = new ol.layer.Image({ zIndex:z, opacity:l.style?.opacity ?? .9, visible:l.visible!==false,
       source:new ol.source.ImageStatic({ url, imageExtent:s.extent, projection:s.projection, crossOrigin:'anonymous', interpolate:true }) });
+  } else if(l.kind==='cog'){
+    // Stor GeoTIFF/COG i Azure: leses bit for bit med range-forespørsler, aldri hele filen.
+    const s=l.source; if(s.projection) ensureProjection(s.projection);
+    await loadLib('geotiff','GeoTIFF');
+    const url = await store.cogUrl(l.id);
+    const src = new ol.source.GeoTIFF({ sources:[{ url, nodata: s.nodata ?? 0 }], convertToRGB:'auto', normalize:true, interpolate:true,
+      sourceOptions:{ allowFullFile:false, cacheSize:200 }, ...(s.projection?{projection:s.projection}:{}) });
+    l._ol = new ol.layer.WebGLTile({ source:src, zIndex:z, opacity:l.style?.opacity ?? 1, visible:l.visible!==false });
   } else if(l.kind==='wms'){
     const s=l.source; l._ol = wmsLayer(s.url, s.layers, {version:s.version, format:s.format, projections:s.projections, opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
   } else {
@@ -564,12 +573,12 @@ async function renderLayer(l){
   }
   map.addLayer(l._ol);
 }
-async function renderAllLayers(){ for(const l of S.layers) await renderLayer(l); renderComments(); }
+async function renderAllLayers(){ for(const l of S.layers){ try{ await renderLayer(l); }catch(e){ console.error(e); toast(`Kunne ikke vise «${l.name}»: ${e.message||e}`); } } renderComments(); }
 function renderComments(){
   commentSource.clear();
   S.comments.forEach(c=>{ const f=new Feature({geometry:new ol.geom.Point(fromLonLat([c.lng,c.lat], VIEW_CRS)), id:c.id, resolved:!!c.resolved}); commentSource.addFeature(f); });
 }
-function layerExtent(l){ if(l.kind==='raster' && l.source?.extent){ ensureProjection(l.source.projection); return transformExtent(l.source.extent, l.source.projection, VIEW_CRS, 8); } if(!l._ol || l.kind!=='vector') return null; const e=l._ol.getSource().getExtent(); return (e && isFinite(e[0]))? e : null; }
+function layerExtent(l){ if((l.kind==='raster'||l.kind==='cog') && l.source?.extent && l.source?.projection){ ensureProjection(l.source.projection); return transformExtent(l.source.extent, l.source.projection, VIEW_CRS, 8); } if(!l._ol || l.kind!=='vector') return null; const e=l._ol.getSource().getExtent(); return (e && isFinite(e[0]))? e : null; }
 async function fitToData(){
   if(!S.map) return;
   let ext=null; S.layers.forEach(l=>{ const e=layerExtent(l); if(e){ ext = ext? ol.extent.extend(ext,e) : e.slice(); } });
@@ -691,7 +700,7 @@ function renderPanel(){
   $('#panelActions').innerHTML = (t==='layers'&&canEdit())?'<button class="btn small" id="addLayer">+ Legg til lag</button>':'';
   if(t==='layers'){
     const rowHtml = l=>{
-      const st=l.style||{}; const n = l.kind==='vector' ? (l._fc?l._fc.features.length+' objekter':'…') : l.kind==='raster' ? `GeoTIFF · ${esc(l.source?.projection||'')}` : l.kind.toUpperCase();
+      const st=l.style||{}; const n = l.kind==='vector' ? (l._fc?l._fc.features.length+' objekter':'…') : l.kind==='raster' ? `GeoTIFF · ${esc(l.source?.projection||'')}` : l.kind==='cog' ? `Mosaikk (Azure) · ${esc(l.source?.projection||'')}` : l.kind.toUpperCase();
       let legend=''; const lg=l.kind==='raster'&&l.source?.legend; if(lg){ const ramp=lg.ramp==='depth'?RAMP_DEPTH:RAMP_TERRAIN; const grad=`linear-gradient(90deg,${ramp.map(([t,c])=>c+' '+Math.round(t*100)+'%').join(',')})`; const f=v=>Math.abs(v)>=100?Math.round(v):(+v).toFixed(1); legend=`<div class="legend rlegend"><span class="mono">${f(lg.ramp==='depth'?lg.max:lg.min)}</span><i class="bar" style="background:${grad}"></i><span class="mono">${f(lg.ramp==='depth'?lg.min:lg.max)} ${lg.ramp==='depth'?'m':''}</span></div>`; }
       if(st.colorBy&&st.colorBy.map){ legend='<div class="legend">'+Object.entries(st.colorBy.map).map(([k,v])=>`<span><i style="background:${v}"></i>${esc(st.colorBy.legend?.[k]||k)}</span>`).join('')+'</div>'; }
       return `<div class="layer${S.activeLayerId===l.id?' active':''}" data-id="${l.id}">
