@@ -565,11 +565,12 @@ async function renderLayer(l){
     const s=l.source; if(s.projection) ensureProjection(s.projection);
     await loadLib('geotiff','GeoTIFF');
     const url = await store.cogUrl(l.id);
+    // Ingen standard nodata: mosaikkene har egen transparensmaske, og nodata=0 ville gjort ekte svarte piksler gjennomsiktige.
     // WGS 84 / UTM (326xx) og EUREF89 / UTM (258xx) i samme sone er like i AGIS sin proj4-definisjon.
     // Da tegnes rasteret i kartets system uten omprojisering, piksel for piksel – ingen resampling.
     const sameZone = /^EPSG:326(\d\d)$/.exec(s.projection||''), viewZone = /^EPSG:258(\d\d)$/.exec(VIEW_CRS||'');
     const proj = (sameZone && viewZone && sameZone[1]===viewZone[1]) ? VIEW_CRS : s.projection;
-    const src = new ol.source.GeoTIFF({ sources:[{ url, nodata: s.nodata ?? 0 }], convertToRGB:'auto', normalize:true, interpolate:true,
+    const src = new ol.source.GeoTIFF({ sources:[{ url, ...(s.nodata!=null?{nodata:s.nodata}:{}) }], convertToRGB:'auto', normalize:true, interpolate:true,
       sourceOptions:{ allowFullFile:false, cacheSize:500 }, ...(proj?{projection:proj}:{}) });
     l._ol = new ol.layer.WebGLTile({ source:src, zIndex:z, opacity:l.style?.opacity ?? 1, visible:l.visible!==false });
   } else if(l.kind==='wms'){
