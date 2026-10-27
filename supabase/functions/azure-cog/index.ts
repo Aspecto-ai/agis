@@ -50,6 +50,18 @@ export async function blobSas(account: string, key: string, container: string, b
   return { url: `https://${account}.blob.core.windows.net/${container}/${path}?${q}`, expires: se };
 }
 
+// Godtar både {"konto":"nøkkel"} og en ren nøkkel (gjelder da standardkontoen).
+// Feil her skal aldri gjengi innholdet i hemmeligheten.
+const DEFAULT_ACCOUNT = "aspectosystem";
+function storageKey(account: string): string | undefined {
+  const raw = (Deno.env.get("AZURE_STORAGE_KEYS") ?? "").trim();
+  if (!raw) return undefined;
+  if (raw.startsWith("{")) {
+    try { return JSON.parse(raw)[account]; } catch { return undefined; }
+  }
+  return account === DEFAULT_ACCOUNT ? raw.replace(/^"|"$/g, "") : undefined;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors(req) });
   try {
@@ -67,8 +79,7 @@ Deno.serve(async (req) => {
     if (!layer || layer.kind !== "cog") return json(req, { error: "Ingen tilgang" }, 403);
 
     const { account, container, blob } = layer.source ?? {};
-    const keys = JSON.parse(Deno.env.get("AZURE_STORAGE_KEYS") ?? "{}");
-    const key = keys[account];
+    const key = storageKey(account);
     if (!key || !container || !blob) return json(req, { error: `Azure-konto ${account} er ikke satt opp` }, 500);
 
     const sas = await blobSas(account, key, container, blob);
@@ -91,6 +102,7 @@ Deno.serve(async (req) => {
     }
     return json(req, { error: "Ukjent action" }, 400);
   } catch (e) {
-    return json(req, { error: e instanceof Error ? e.message : String(e) }, 500);
+    console.error(e);
+    return json(req, { error: "Intern feil i azure-cog – se funksjonsloggen" }, 500);
   }
 });
