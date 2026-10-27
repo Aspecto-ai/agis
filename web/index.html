@@ -79,6 +79,37 @@ a{color:var(--sea)}
 .mapcard{display:block;width:100%;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);padding:10px 12px;margin-bottom:8px}
 .mapcard:hover{border-color:var(--sea)}
 .mapcard b{display:block;font-weight:600}
+.mapcard .who{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center}
+.mapcard .who .lbl{font-size:11px;color:var(--muted);margin-right:2px}
+.chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;line-height:1;padding:3px 7px;border-radius:999px;background:var(--sea-soft);color:var(--fg);border:1px solid var(--line);white-space:nowrap}
+.chip.ed{border-color:var(--sea)}
+.chip.staff{background:transparent}
+.chip.pub{background:#fdf1dc;border-color:var(--warn);color:#7a5200}
+.chip.lock{background:#f8e3df;border-color:var(--bad);color:#7d2a1e}
+.chip.none{background:transparent;color:var(--muted)}
+/* Tilgangsoversikt */
+.accov{position:fixed;inset:0;z-index:50;background:rgba(15,27,32,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto}
+.accov .sheet{background:var(--panel);color:var(--fg);border-radius:10px;box-shadow:var(--shadow);width:min(1100px,100%);display:flex;flex-direction:column;max-height:calc(100vh - 80px)}
+.accov header{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.accov header h2{margin:0;font-size:17px;flex:1;min-width:180px}
+.accov .seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+.accov .seg button{border:0;background:var(--bg);color:var(--fg);padding:6px 12px;font-size:13px;cursor:pointer}
+.accov .seg button.on{background:var(--navy);color:#fff}
+.accov input.q{border:1px solid var(--line);border-radius:6px;padding:6px 10px;background:var(--bg);color:var(--fg);min-width:200px}
+.accov .x{border:0;background:none;color:var(--muted);font-size:22px;cursor:pointer;padding:0 4px}
+.accov .sum{padding:10px 18px;color:var(--muted);font-size:12px;border-bottom:1px solid var(--line)}
+.accov .content{overflow:auto;padding:4px 18px 18px}
+.accov table{width:100%;border-collapse:collapse;font-size:13px}
+.accov th{position:sticky;top:0;background:var(--panel);text-align:left;font-weight:600;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;padding:10px 8px;border-bottom:1px solid var(--line)}
+.accov td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.accov td .chips{display:flex;flex-wrap:wrap;gap:4px}
+.accov .chip button{all:unset;cursor:pointer;color:var(--muted);font-size:13px;line-height:1;margin-left:2px}
+.accov .chip button:hover{color:var(--bad)}
+.accov a.mlink{color:var(--sea);cursor:pointer;font-weight:600;text-decoration:none}
+.accov .muted{color:var(--muted)}
+.accov .dom{font-size:11px;color:var(--muted);display:block}
+.accov .warnc{color:var(--warn)}
+@media (max-width:760px){ .accov{padding:0} .accov .sheet{border-radius:0;max-height:100vh} .accov th:nth-child(2),.accov td:nth-child(2){display:none} }
 .mapcard small{color:var(--muted);display:block;margin-top:2px}
 .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:999px;background:var(--sea-soft);color:var(--sea);font-weight:500;margin-left:6px}
 
@@ -166,7 +197,7 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
 @media (max-width:760px){ .imgadj{top:auto;bottom:64px;right:10px;width:220px} }
 
 /* Dialog */
-.dialog{position:fixed;inset:0;background:rgba(22,49,59,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
+.dialog{position:fixed;inset:0;background:rgba(22,49,59,.45);display:flex;align-items:center;justify-content:center;z-index:60;padding:16px}
 .dialog .box{background:var(--panel);color:var(--fg);border-radius:8px;padding:18px;width:min(420px,100%);box-shadow:var(--shadow)}
 .dialog h3{margin:0 0 12px;font-size:15px}
 .dialog p.hint{white-space:pre-wrap;max-height:240px;overflow:auto}
@@ -369,6 +400,8 @@ class DemoStore {
   async setCommentResolved(id,v){ const c=this.d.comments.find(x=>x.id===id); c.resolved=v; }
   async deleteComment(id){ this.d.comments=this.d.comments.filter(c=>c.id!==id); }
   async listAccess(mapId){ return this.d.access.filter(a=>a.map_id===mapId); }
+  async listAllAccess(){ return [...this.d.access]; }
+  async userLogins(){ return []; }
   async setAccess(mapId,email,role){ this.d.access=this.d.access.filter(a=>!(a.map_id===mapId&&a.email===email)); this.d.access.push({map_id:mapId,email,role}); }
   async removeAccess(mapId,email){ this.d.access=this.d.access.filter(a=>!(a.map_id===mapId&&a.email===email)); }
   async uploadFile(path, blob){ this.files = this.files||{}; this.files[path]=URL.createObjectURL(blob); return path; }
@@ -404,6 +437,8 @@ class SupabaseStore {
   async setCommentResolved(id,v){ return this._q(this.sb.from('kart_comments').update({resolved:v}).eq('id',id)); }
   async deleteComment(id){ return this._q(this.sb.from('kart_comments').delete().eq('id',id)); }
   async listAccess(mapId){ return this._q(this.sb.from('kart_access').select('*').eq('map_id',mapId).order('email')); }
+  async listAllAccess(){ return this._q(this.sb.from('kart_access').select('*').order('email')); }
+  async userLogins(emails){ if(!emails.length) return []; return this._q(this.sb.rpc('kart_user_logins',{p_emails:emails})); }
   async setAccess(mapId,email,role){ return this._q(this.sb.from('kart_access').upsert({map_id:mapId,email:email.toLowerCase(),role})); }
   async removeAccess(mapId,email){ return this._q(this.sb.from('kart_access').delete().eq('map_id',mapId).eq('email',email)); }
   async mapBbox(mapId){ return this._q(this.sb.rpc('kart_map_bbox',{p_map:mapId})); }
@@ -412,6 +447,66 @@ class SupabaseStore {
   async removeFiles(paths){ await this.sb.storage.from('kart-filer').remove(paths.filter(Boolean)); }
   async cogUrl(layerId){ const {data,error}=await this.sb.functions.invoke('azure-cog',{body:{layer_id:layerId}}); if(error) throw error; if(data?.error) throw new Error(data.error); return data.url; }
   async logAccess(mapId, action){ return this._q(this.sb.rpc('kart_log',{p_map:mapId, p_action:action})); }
+}
+
+// ---- Tilganger: hvem ser hva -------------------------------------------------
+function personLabel(email){ const [u,d]=String(email).split('@'); const n=u.split(/[._-]+/).filter(Boolean).map(w=>w[0].toUpperCase()+w.slice(1)).join(' '); return {name:n||email, domain:d||''}; }
+function whoLine(m, acc){
+  const chips=[];
+  if(m.is_public && !m.restricted) chips.push('<span class="chip pub" title="Alle med lenken, uten innlogging">Offentlig</span>');
+  if(m.restricted) chips.push('<span class="chip lock" title="Bare eier og personene på listen">Begrenset</span>');
+  else chips.push(`<span class="chip staff" title="Alle med @${esc(CFG.staffDomain||'aspecto.no')}-konto">Alle i Aspecto</span>`);
+  acc.forEach(a=>{ const p=personLabel(a.email); chips.push(`<span class="chip${a.role==='editor'?' ed':''}" title="${esc(a.email)} · ${a.role==='editor'?'redigerer':'leser'}">${esc(p.name)}${a.role==='editor'?' ✎':''}</span>`); });
+  if(!acc.length && !m.is_public) chips.push('<span class="chip none">Ingen eksterne</span>');
+  return `<div class="who"><span class="lbl">Ser kartet:</span>${chips.join('')}</div>`;
+}
+async function openAccessOverview(){
+  document.querySelector('.accov')?.remove();
+  const ov=document.createElement('div'); ov.className='accov'; ov.innerHTML='<div class="sheet"><header><h2>Tilganger – hvem ser hva</h2></header><div class="sum">Henter …</div></div>'; document.body.appendChild(ov);
+  const close=()=>{ ov.remove(); document.removeEventListener('keydown',onKey); }; const onKey=e=>{ if(e.key==='Escape') close(); };
+  document.addEventListener('keydown',onKey); ov.addEventListener('click',e=>{ if(e.target===ov) close(); });
+  let maps=[], acc=[], logins={};
+  try{ [maps, acc] = await Promise.all([store.listMaps(), store.listAllAccess()]); }catch(e){ ov.querySelector('.sum').textContent='Kunne ikke hente: '+e.message; return; }
+  try{ (await store.userLogins([...new Set(acc.map(a=>a.email))])).forEach(r=>logins[r.email]=r.last_sign_in_at); }catch(_){}
+  const mapById=Object.fromEntries(maps.map(m=>[m.id,m]));
+  acc=acc.filter(a=>mapById[a.map_id]);
+  let mode='person', q='';
+  const loginTxt=em=> logins[em] ? 'Sist innlogget '+fmtDate(logins[em]) : '<span class="warnc">Har ikke logget inn</span>';
+  const render=()=>{
+    const ql=q.toLowerCase(); const match=(...xs)=>!ql || xs.some(x=>String(x||'').toLowerCase().includes(ql));
+    const people=[...new Set(acc.map(a=>a.email))].sort();
+    const ext=people.length, pub=maps.filter(m=>m.is_public&&!m.restricted).length, lock=maps.filter(m=>m.restricted).length;
+    let html='';
+    if(mode==='person'){
+      const rows=people.map(em=>{ const p=personLabel(em); const mine=acc.filter(a=>a.email===em).map(a=>({a,m:mapById[a.map_id]}));
+        if(!match(em,p.name,...mine.map(x=>x.m.title),...mine.map(x=>x.m.customer))) return '';
+        return `<tr><td><b>${esc(p.name)}</b><span class="dom">${esc(em)}</span></td><td class="muted">${loginTxt(em)}</td><td><div class="chips">${mine.map(({a,m})=>`<span class="chip${a.role==='editor'?' ed':''}${m.restricted?' lock':''}" title="${a.role==='editor'?'Redigerer':'Leser'}${m.customer?' · '+esc(m.customer):''}"><a class="mlink" data-open="${m.id}">${esc(m.title)}</a>${a.role==='editor'?' ✎':''}<button data-rm="${m.id}|${esc(em)}" title="Fjern tilgang">×</button></span>`).join('')}</div></td></tr>`; }).join('');
+      html=`<table><thead><tr><th>Person</th><th>Innlogging</th><th>Ser disse kartene</th></tr></thead><tbody>${rows||'<tr><td colspan="3" class="muted">Ingen treff.</td></tr>'}</tbody></table>`;
+    } else {
+      const rows=maps.filter(m=>match(m.title,m.customer,...acc.filter(a=>a.map_id===m.id).map(a=>a.email))).sort((a,b)=>(a.customer||'~').localeCompare(b.customer||'~','nb')||a.title.localeCompare(b.title,'nb')).map(m=>{
+        const ms=acc.filter(a=>a.map_id===m.id);
+        const base = m.restricted ? '<span class="chip lock">Begrenset – kun listen</span>' : `<span class="chip staff">Alle i Aspecto</span>${m.is_public?'<span class="chip pub">Offentlig</span>':''}`;
+        return `<tr><td><a class="mlink" data-open="${m.id}">${esc(m.title)}</a><span class="dom">${esc(m.customer||'Uten kunde')}</span></td><td class="muted">${ms.length} ${ms.length===1?'ekstern':'eksterne'}</td><td><div class="chips">${base}${ms.map(a=>{ const p=personLabel(a.email); return `<span class="chip${a.role==='editor'?' ed':''}" title="${esc(a.email)} · ${a.role==='editor'?'redigerer':'leser'} · ${logins[a.email]?'sist innlogget '+fmtDate(logins[a.email]):'har ikke logget inn'}">${esc(p.name)}${a.role==='editor'?' ✎':''}${logins[a.email]?'':' ⚠'}<button data-rm="${m.id}|${esc(a.email)}" title="Fjern tilgang">×</button></span>`; }).join('')}</div></td></tr>`; }).join('');
+      html=`<table><thead><tr><th>Kart</th><th>Eksterne</th><th>Hvem ser kartet</th></tr></thead><tbody>${rows||'<tr><td colspan="3" class="muted">Ingen treff.</td></tr>'}</tbody></table>`;
+    }
+    ov.querySelector('.sheet').innerHTML=`<header><h2>Tilganger – hvem ser hva</h2>
+      <div class="seg"><button data-m="person" class="${mode==='person'?'on':''}">Per person</button><button data-m="map" class="${mode==='map'?'on':''}">Per kart</button></div>
+      <input class="q" type="search" placeholder="Søk person, kart eller kunde" value="${esc(q)}"><button class="btn small" data-csv>Last ned CSV</button><button class="x" title="Lukk">×</button></header>
+      <div class="sum">${maps.length} kart · ${ext} eksterne personer · ${pub} offentlige · ${lock} begrensede. Ansatte med @${esc(CFG.staffDomain||'aspecto.no')} ser alle kart som ikke er begrenset. ✎ = kan redigere, ⚠ = har ikke logget inn ennå.</div>
+      <div class="content">${html}</div>`;
+    const sh=ov.querySelector('.sheet');
+    sh.querySelector('.x').onclick=close;
+    sh.querySelectorAll('[data-m]').forEach(b=>b.onclick=()=>{ mode=b.dataset.m; render(); });
+    const qi=sh.querySelector('input.q'); qi.oninput=()=>{ q=qi.value; const pos=qi.selectionStart; render(); const n=ov.querySelector('input.q'); n.focus(); n.setSelectionRange(pos,pos); };
+    sh.querySelectorAll('[data-open]').forEach(a=>a.onclick=()=>{ close(); openMap(a.dataset.open); });
+    sh.querySelectorAll('[data-rm]').forEach(b=>b.onclick=async e=>{ e.stopPropagation(); const [mid,em]=b.dataset.rm.split('|'); const m=mapById[mid];
+      const ok=await dialog({title:'Fjerne tilgang?', text:`${em} mister tilgangen til «${m.title}».`, fields:[], ok:'Fjern tilgang'}); if(!ok) return;
+      try{ await store.removeAccess(mid,em); acc=acc.filter(a=>!(a.map_id===mid&&a.email===em)); if(S.map&&S.map.id===mid){ S.access=await store.listAccess(mid); } render(); toast('Tilgang fjernet'); }catch(err2){ toast('Kunne ikke fjerne: '+err2.message); } });
+    sh.querySelector('[data-csv]').onclick=()=>{ const lines=[['Kart','Kunde','Synlighet','E-post','Rolle','Sist innlogget']];
+      maps.forEach(m=>{ const vis=m.restricted?'Begrenset':(m.is_public?'Offentlig + alle i Aspecto':'Alle i Aspecto'); const ms=acc.filter(a=>a.map_id===m.id); if(!ms.length) lines.push([m.title,m.customer||'',vis,'','','']); ms.forEach(a=>lines.push([m.title,m.customer||'',vis,a.email,a.role==='editor'?'Redigerer':'Leser',logins[a.email]?new Date(logins[a.email]).toISOString().slice(0,10):'Aldri'])); });
+      download('agis-tilganger.csv','\ufeff'+lines.map(r=>r.map(v=>'"'+String(v).replace(/"/g,'""')+'"').join(';')).join('\r\n')); };
+  };
+  render();
 }
 
 // ---- Bildejustering for mosaikker (endrer bare visningen, aldri originalfilen) ----
@@ -824,13 +919,15 @@ $('#panelToggle').onclick=()=>$('#panel').classList.toggle('open');
 
 async function renderMapsList(){
   $('#tabs').hidden=true; $('#panelTitle').textContent='Kart'; $('#mapTitle').value=''; $('#mapTitle').readOnly=true;
-  $('#panelActions').innerHTML = (S.user&&S.user.staff)?'<button class="btn primary small" id="newMap">+ Nytt kart</button>':'';
+  $('#panelActions').innerHTML = (S.user&&S.user.staff)?'<button class="btn small" id="accOverview" title="Hvem ser hvilke kart">Tilganger</button> <button class="btn primary small" id="newMap">+ Nytt kart</button>':'';
+  const ao=$('#accOverview'); if(ao) ao.onclick=()=>openAccessOverview();
   const body=$('#panelBody');
   if(!S.user && !DEMO){ body.innerHTML='<div class="welcome"><img src="logo-navy.png" alt="Aspecto"><h3>AGIS – AspectoGIS</h3><p>Kartportal for surveydata, lokaliteter og miljøundersøkelser.</p></div><div class="notice">Logg inn med Microsoft-kontoen din for å se kartene dine. Kunder bruker samme innlogging (gjestekonto i Aspecto).</div>'; return; }
   let maps=[]; try{ maps=await store.listMaps(); }catch(e){ body.innerHTML=`<div class="notice">Kunne ikke hente kart: ${esc(e.message)}</div>`; return; }
+  const accByMap={}; if(S.user&&S.user.staff){ try{ (await store.listAllAccess()).forEach(a=>{ (accByMap[a.map_id] ||= []).push(a); }); }catch(_){} }
   body.innerHTML = (DEMO?'<div class="notice">Demo-modus: data lagres ikke. AGIS kobles til Supabase i konfigurasjonen for drift.</div>':'') +
     (maps.length ? (()=>{ const groups={}; maps.forEach(m=>{ (groups[m.customer||'Uten kunde'] ||= []).push(m); });
-      return Object.keys(groups).sort((a,b)=> a==='Uten kunde' ? 1 : b==='Uten kunde' ? -1 : a.localeCompare(b,'nb')).map(c=>`<div class="custgroup"><h3 class="custname">${esc(c)}<span>${groups[c].length} kart</span></h3>${groups[c].map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}${m.restricted?'<span class="pill lock">begrenset</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small></button>`).join('')}</div>`).join(''); })() : '<div class="hint">Ingen kart ennå.</div>');
+      return Object.keys(groups).sort((a,b)=> a==='Uten kunde' ? 1 : b==='Uten kunde' ? -1 : a.localeCompare(b,'nb')).map(c=>`<div class="custgroup"><h3 class="custname">${esc(c)}<span>${groups[c].length} kart</span></h3>${groups[c].map(m=>`<button class="mapcard" data-id="${m.id}"><b>${esc(m.title)}${m.is_public?'<span class="pill">offentlig</span>':''}${m.restricted?'<span class="pill lock">begrenset</span>':''}</b><small>${esc(m.description||'')}</small><small>Oppdatert ${fmtDate(m.updated_at)}</small>${S.user&&S.user.staff?whoLine(m, accByMap[m.id]||[]):''}</button>`).join('')}</div>`).join(''); })() : '<div class="hint">Ingen kart ennå.</div>');
   body.querySelectorAll('.mapcard').forEach(b=>b.onclick=()=>openMap(b.dataset.id));
   if(S.user&&S.user.staff) body.insertAdjacentHTML('beforeend','<div class="hint droptip">Tips: dra en mappe eller filer hit for å lage et nytt kart, f.eks. for en ny kunde.</div>');
   const nm=$('#newMap'); if(nm) nm.onclick=async()=>{ const r=await dialog({title:'Nytt kart',fields:[{k:'customer',label:'Kunde',type:'datalist',options:[...new Set((await store.listMaps().catch(()=>[])).map(x=>x.customer).filter(Boolean))],value:''},{k:'restricted',label:'Tilgang',type:'checkbox',value:false,hint:'Begrenset – bare personer jeg legger til ser kartet (ikke andre ansatte)'},{k:'title',label:'Tittel',value:''},{k:'description',label:'Beskrivelse',value:'',type:'textarea'}],ok:'Opprett'}); if(!r||!r.title) return; if(!r.customer) delete r.customer; const [lng,lat]=toLonLat(view.getCenter(),VIEW_CRS); const m=await store.createMap({customer:r.customer,restricted:!!r.restricted,title:r.title,description:r.description,center_lng:lng,center_lat:lat,zoom:view.getZoom(),crs:VIEW_CRS}); openMap(m.id); };
@@ -885,11 +982,13 @@ function renderPanel(){
       ${canEdit()&&!S.map.restricted?`<div class="field"><label class="chk"><input type="checkbox" id="isPublic" ${S.map.is_public?'checked':''}> Offentlig kart (alle med lenken kan se, uten innlogging)</label><div class="hint">Skru på for kart som skal vises åpent på aspecto.no.</div></div>`:''}
       ${S.map.customer?`<div class="notice">Kunde: <b>${esc(S.map.customer)}</b></div>`:''}<div class="section"><h3>Lenke</h3><div class="row"><input class="mono" id="shareLink" value="${esc(link)}" readonly style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><button class="btn small" id="copyLink">Kopier</button></div></div>
       ${S.map.restricted?'':`<div class="section"><h3>Innbygging på nettside</h3><pre class="embed" id="embedCode">${esc(embed)}</pre><button class="btn small" id="copyEmbed">Kopier kode</button><div class="hint" style="margin-top:6px">Innlogging skjer ikke inne i rammen – kart som bygges inn bør være offentlige, ellers vises en «Åpne i AGIS»-knapp.</div></div>`}
+      ${S.user&&S.user.staff?`<div class="section"><button class="btn small" id="accOverview2">Se alle kart og tilganger</button></div>`:''}
       ${canEdit()?`<div class="section"><h3>Tilgang per e-post</h3><div id="accessList">${S.access.map(a=>`<div class="access"><span>${esc(a.email)} <span class="pill">${a.role==='editor'?'redigerer':'leser'}</span></span><button class="iconbtn" data-email="${esc(a.email)}" title="Fjern">${ICON.trash}</button></div>`).join('')||'<div class="hint">Ingen eksterne. Ansatte (@'+esc(CFG.staffDomain||'aspecto.no')+') har alltid tilgang.</div>'}</div>
         <div class="row" style="margin-top:8px"><input id="accEmail" placeholder="kunde@firma.no" type="email" style="flex:1;border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><select id="accRole" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)"><option value="viewer">Leser</option><option value="editor">Redigerer</option></select><button class="btn small" id="accAdd">Legg til</button></div>
         <div class="hint" style="margin-top:6px">Personen må også være invitert som gjest i Aspectos Microsoft-tenant for å kunne logge inn (MFA håndheves der).</div></div>
       <div class="section"><h3>Koordinatsystem</h3><div class="row"><select id="crsSel" style="border:1px solid var(--line);border-radius:4px;padding:6px;background:var(--bg)">${Object.entries(CRS).map(([k,v])=>`<option value="${k}" ${k===VIEW_CRS?'selected':''}>${v.region}: ${v.label} – ${v.name}</option>`).join('')}</select></div><div class="hint" style="margin-top:6px">Standard velges fra kartets senter: UTM 32 sør for ${CRS_SPLIT_LAT}°N, UTM 33 nord for, UTM 35 i Finnmark, Faroe TM på Færøyane og British National Grid i Skottland. Grunnlag: Kartverket topo i Norge, OpenStreetMap utenfor.</div></div>
       <div class="section"><h3>Kart</h3><div class="row"><button class="btn small" id="editMeta">Rediger tittel/beskrivelse</button><button class="btn small danger" id="delMap">Slett kart</button></div></div>`:''}`;
+    const ao2=$('#accOverview2'); if(ao2) ao2.onclick=()=>openAccessOverview();
     $('#copyLink').onclick=()=>copy(link); const ce=$('#copyEmbed'); if(ce) ce.onclick=()=>copy(embed);
     const ir=$('#isRestricted'); if(ir) ir.onchange=async()=>{
       if(!ir.checked){ const ok=await dialog({title:'Oppheve begrensning?', text:'Da kan alle ansatte i Aspecto se kartet. Gjør dette bare hvis dataene er frigitt.', fields:[], ok:'Opphev begrensning'}); if(!ok){ ir.checked=true; return; } }
