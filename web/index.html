@@ -146,6 +146,23 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
 .embedbadge{position:absolute;left:10px;bottom:34px;z-index:5;background:var(--navy);color:#fff;border-radius:var(--radius);padding:6px 10px;font-size:12px;display:flex;gap:10px;align-items:center;box-shadow:var(--shadow)}
 .embedbadge a{color:#fff;font-weight:600}
 .panel-toggle{display:none;position:absolute;right:10px;bottom:34px;z-index:6}
+/* Bildejustering for mosaikker */
+.imgadj{position:absolute;top:10px;right:10px;z-index:5;width:236px;background:var(--panel);color:var(--fg);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);font-size:12px}
+.imgadj > button.head{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:space-between;width:100%;padding:7px 10px;font-weight:600}
+.imgadj > button.head svg{width:14px;height:14px;stroke:currentColor;fill:none;stroke-width:2;transition:transform .15s}
+.imgadj.open > button.head svg{transform:rotate(180deg)}
+.imgadj .body{display:none;padding:2px 10px 10px;border-top:1px solid var(--line)}
+.imgadj.open .body{display:block}
+.imgadj .lname{color:var(--muted);font-size:11px;margin:6px 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imgadj label{display:grid;grid-template-columns:72px 1fr 34px;align-items:center;gap:6px;margin:5px 0}
+.imgadj input[type=range]{width:100%;accent-color:var(--sea);margin:0}
+.imgadj output{font-family:var(--mono);font-size:11px;text-align:right;color:var(--muted)}
+.imgadj .btns{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.imgadj .btns button{flex:1;border:1px solid var(--line);background:var(--bg);color:var(--fg);border-radius:4px;padding:5px 6px;font-size:12px;cursor:pointer}
+.imgadj .btns button.primary{background:var(--sea);border-color:var(--sea);color:#fff;font-weight:600}
+.imgadj .btns button:disabled{opacity:.6;cursor:wait}
+.imgadj .note{color:var(--muted);font-size:11px;margin-top:6px}
+@media (max-width:760px){ .imgadj{top:auto;bottom:64px;right:10px;width:220px} }
 
 /* Dialog */
 .dialog{position:fixed;inset:0;background:rgba(22,49,59,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:16px}
@@ -251,6 +268,7 @@ pre.embed{background:var(--bg);border:1px solid var(--line);border-radius:4px;pa
       </div>
     </div>
     <div class="modehint" id="modehint" hidden></div>
+    <div class="imgadj" id="imgAdj" hidden></div>
     <div class="statusbar"><span id="coords">—</span><span class="crsbadge" id="crsbadge">—</span></div>
     <div id="popup" class="popup" hidden></div>
     <div class="dropoverlay" id="dropOverlay" hidden><div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><b>Slipp filene for å legge dem til som lag</b><span>Filer eller hele mapper · GeoTIFF · GeoPackage · Shapefil · GeoJSON · KML · GPX · CSV/Excel</span></div></div>
@@ -393,6 +411,87 @@ class SupabaseStore {
   async removeFiles(paths){ await this.sb.storage.from('kart-filer').remove(paths.filter(Boolean)); }
   async cogUrl(layerId){ const {data,error}=await this.sb.functions.invoke('azure-cog',{body:{layer_id:layerId}}); if(error) throw error; if(data?.error) throw new Error(data.error); return data.url; }
   async logAccess(mapId, action){ return this._q(this.sb.rpc('kart_log',{p_map:mapId, p_action:action})); }
+}
+
+// ---- Bildejustering for mosaikker (endrer bare visningen, aldri originalfilen) ----
+const ADJ_DEFAULT = {brightness:0, contrast:0, exposure:0, saturation:0, gamma:1};
+const ADJ_FIELDS = [
+  ['brightness','Lysstyrke',-0.5,0.5,0.01], ['contrast','Kontrast',-0.9,0.9,0.01], ['exposure','Eksponering',-0.8,3,0.01],
+  ['saturation','Metning',-1,1,0.01], ['gamma','Gamma',0.3,3,0.01]];
+const adjKey = l => 'agis-adj-'+l.id;
+function loadAdjust(l){
+  let local=null; try{ local=JSON.parse(localStorage.getItem(adjKey(l))||'null'); }catch(_){}
+  return {...ADJ_DEFAULT, ...(l.style?.adjust||{}), ...(local||{})};
+}
+function saveLocalAdjust(l){ try{ localStorage.setItem(adjKey(l), JSON.stringify(l._adj)); }catch(_){} }
+function applyAdjust(l){ if(l._ol?.updateStyleVariables) l._ol.updateStyleVariables({...l._adj}); }
+let adjOpen=false;
+function renderImgAdj(){
+  const box=$('#imgAdj'); const l=(S.layers||[]).find(x=>x.kind==='cog' && x._ol);
+  if(!l){ box.hidden=true; box.innerHTML=''; return; }
+  box.hidden=false; box.classList.toggle('open', adjOpen);
+  box.innerHTML=`<button class="head" type="button" aria-expanded="${adjOpen}">Bildejustering<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
+    <div class="body"><div class="lname" title="${esc(l.name)}">${esc(l.name)}</div>
+    ${ADJ_FIELDS.map(([k,lab,mn,mx,st])=>`<label>${lab}<input type="range" data-k="${k}" min="${mn}" max="${mx}" step="${st}" value="${l._adj[k]}"><output data-o="${k}">${(+l._adj[k]).toFixed(2)}</output></label>`).join('')}
+    <div class="btns"><button type="button" class="primary" data-a="auto">Auto</button><button type="button" data-a="reset">Nullstill</button>${canEdit()?'<button type="button" data-a="save" title="Lagre som standard for alle som ser kartet">Lagre for alle</button>':''}</div>
+    <div class="note">Endrer bare visningen. Originalfilen er urørt.</div></div>`;
+  box.querySelector('.head').onclick=()=>{ adjOpen=!adjOpen; box.classList.toggle('open',adjOpen); box.querySelector('.head').setAttribute('aria-expanded',adjOpen); };
+  const sync=()=>{ ADJ_FIELDS.forEach(([k])=>{ box.querySelector(`[data-k=${k}]`).value=l._adj[k]; box.querySelector(`[data-o=${k}]`).textContent=(+l._adj[k]).toFixed(2); }); };
+  box.querySelectorAll('input[type=range]').forEach(inp=>inp.oninput=()=>{ l._adj[inp.dataset.k]=+inp.value; box.querySelector(`[data-o=${inp.dataset.k}]`).textContent=(+inp.value).toFixed(2); applyAdjust(l); saveLocalAdjust(l); });
+  box.querySelector('[data-a=reset]').onclick=()=>{ l._adj={...ADJ_DEFAULT, ...(l.style?.adjust||{})}; try{ localStorage.removeItem(adjKey(l)); }catch(_){} applyAdjust(l); sync(); };
+  const bAuto=box.querySelector('[data-a=auto]');
+  bAuto.onclick=async()=>{ bAuto.disabled=true; bAuto.textContent='Beregner…';
+    try{ l._adj = {...ADJ_DEFAULT, ...(await autoAdjust(l))}; applyAdjust(l); saveLocalAdjust(l); sync(); toast('Bildet er optimalisert'); }
+    catch(e){ console.error(e); toast('Auto feilet: '+(e.message||e)); }
+    finally{ bAuto.disabled=false; bAuto.textContent='Auto'; } };
+  const bSave=box.querySelector('[data-a=save]');
+  if(bSave) bSave.onclick=async()=>{ const style={...(l.style||{}), adjust:{...l._adj}}; await store.updateLayer(l.id,{style}); l.style=style; try{ localStorage.removeItem(adjKey(l)); }catch(_){} toast('Lagret som standard for kartet'); };
+}
+
+// Azure sender ikke alltid Content-Range gjennom CORS. GeoTIFF-leseren trenger den for å vite
+// hvilke byte den fikk, så vi legger den til ut fra Range-forespørselen og filstørrelsen (kun Azure Blob).
+(function(){
+  if(window.__agisFetchPatched) return; window.__agisFetchPatched=true;
+  const orig=window.fetch.bind(window); const sizes={};
+  window.fetch=async(input, init={})=>{
+    const url=typeof input==='string'?input:input?.url||''; const res=await orig(input, init);
+    if(!/\.blob\.core\.windows\.net\//.test(url) || res.status!==206 || res.headers.get('content-range')) return res;
+    const h=init.headers||{}; const rg=(h instanceof Headers? h.get('Range') : (h.Range||h.range))||''; const m=/bytes=(\d+)-/.exec(rg); if(!m) return res;
+    const base=url.split('?')[0];
+    if(!sizes[base]){ const hd=await orig(url,{method:'HEAD'}); sizes[base]=+hd.headers.get('content-length')||'*'; }
+    const buf=await res.arrayBuffer(); const start=+m[1]; const hh=new Headers(res.headers);
+    hh.set('Content-Range',`bytes ${start}-${start+buf.byteLength-1}/${sizes[base]}`);
+    return new Response(buf,{status:206,statusText:'Partial Content',headers:hh});
+  };
+})();
+
+// Auto: leser et oversiktsnivå av mosaikken, bruker filens maske, og finner 1 %/99 %-persentilene
+// for lyshet. Kontrast + eksponering strekker dem til svart/hvitt, gamma legger medianen på 0,45.
+async function autoAdjust(l){
+  const GT=await loadLib('geotiff','GeoTIFF');
+  if(!l._url) l._url=await store.cogUrl(l.id);
+  const tiff=l._tiff || (l._tiff=await GT.fromUrl(l._url,{allowFullFile:false}));
+  const n=await tiff.getImageCount(); const imgs=[];
+  for(let i=0;i<n;i++){ const im=await tiff.getImage(i); imgs.push({i, im, w:im.getWidth(), h:im.getHeight(), mask: !!((im.fileDirectory.NewSubfileType||0)&4)}); }
+  const data=imgs.filter(x=>!x.mask).sort((a,b)=>a.w*a.h-b.w*b.h);
+  const pick=data.find(x=>x.w*x.h>=1.5e6) || data[data.length-1];
+  const mk=imgs.find(x=>x.mask && x.w===pick.w && x.h===pick.h);
+  const [rgb, msk]=await Promise.all([ pick.im.readRGB({interleave:true}), mk? mk.im.readRasters({samples:[0]}).then(r=>r[0]) : null ]);
+  const N=pick.w*pick.h, step=Math.max(1,Math.floor(N/400000)); const hist=new Uint32Array(256); let cnt=0;
+  for(let p=0;p<N;p+=step){
+    if(msk ? !msk[p] : false) continue;
+    const r=rgb[p*3], g=rgb[p*3+1], b=rgb[p*3+2]; if(!msk && r===0&&g===0&&b===0) continue;
+    hist[Math.round(0.2126*r+0.7152*g+0.0722*b)]++; cnt++;
+  }
+  if(cnt<100) throw new Error('fant for lite bildedata');
+  const pct=q=>{ let acc=0, t=q*cnt; for(let v=0;v<256;v++){ acc+=hist[v]; if(acc>=t) return v/255; } return 1; };
+  let lo=pct(0.01), hi=pct(0.99), med=pct(0.5);
+  lo=Math.min(lo,0.24); if(hi-lo<0.05) hi=Math.min(1,lo+0.05);
+  const k=1/(hi-lo), contrast=2*lo/(1-2*lo), exposure=k*(1-2*lo)-1;
+  const m=Math.min(0.98,Math.max(0.02,(med-lo)/(hi-lo))); let gamma=Math.log(m)/Math.log(0.45);
+  gamma=Math.min(2.5,Math.max(0.5,gamma));
+  const r2=x=>Math.round(x*100)/100;
+  return {contrast:r2(contrast), exposure:r2(Math.min(3,exposure)), gamma:r2(gamma), brightness:0, saturation:0.1};
 }
 
 // ---- Geometri-hjelpere ---------------------------------------------------
@@ -572,7 +671,10 @@ async function renderLayer(l){
     const proj = (sameZone && viewZone && sameZone[1]===viewZone[1]) ? VIEW_CRS : s.projection;
     const src = new ol.source.GeoTIFF({ sources:[{ url, ...(s.nodata!=null?{nodata:s.nodata}:{}) }], convertToRGB:'auto', normalize:true, interpolate:true,
       sourceOptions:{ allowFullFile:false, cacheSize:500 }, ...(proj?{projection:proj}:{}) });
-    l._ol = new ol.layer.WebGLTile({ source:src, zIndex:z, opacity:l.style?.opacity ?? 1, visible:l.visible!==false });
+    l._adj = loadAdjust(l);
+    l._ol = new ol.layer.WebGLTile({ source:src, zIndex:z, opacity:l.style?.opacity ?? 1, visible:l.visible!==false,
+      style:{ contrast:['var','contrast'], exposure:['var','exposure'], saturation:['var','saturation'], gamma:['var','gamma'], brightness:['var','brightness'], variables:{...l._adj} } });
+    l._url = url;
   } else if(l.kind==='wms'){
     const s=l.source; l._ol = wmsLayer(s.url, s.layers, {version:s.version, format:s.format, projections:s.projections, opacity:l.style?.opacity ?? .85, zIndex:z}); l._ol.setVisible(l.visible!==false);
   } else {
@@ -580,7 +682,7 @@ async function renderLayer(l){
   }
   map.addLayer(l._ol);
 }
-async function renderAllLayers(){ for(const l of S.layers){ try{ await renderLayer(l); }catch(e){ console.error(e); toast(`Kunne ikke vise «${l.name}»: ${e.message||e}`); } } renderComments(); }
+async function renderAllLayers(){ for(const l of S.layers){ try{ await renderLayer(l); }catch(e){ console.error(e); toast(`Kunne ikke vise «${l.name}»: ${e.message||e}`); } } renderComments(); renderImgAdj(); }
 function renderComments(){
   commentSource.clear();
   S.comments.forEach(c=>{ const f=new Feature({geometry:new ol.geom.Point(fromLonLat([c.lng,c.lat], VIEW_CRS)), id:c.id, resolved:!!c.resolved}); commentSource.addFeature(f); });
@@ -1339,7 +1441,7 @@ async function setMapCrs(crs){
 }
 
 document.querySelectorAll('#drawTools button').forEach(b=>b.onclick=()=>setMode(b.dataset.mode));
-$('#brandLink').onclick=e=>{ e.preventDefault(); $('#lockBadge').hidden=true; S.layers.forEach(removeLayerFromMap); S.layers=[]; S.comments=[]; renderComments(); closePopup(); setMode(null); S.map=null; history.replaceState(null,'','?'); $('#drawTools').hidden=true; renderMapsList(); if(window.innerWidth<=760) $('#panel').classList.add('open'); };
+$('#brandLink').onclick=e=>{ e.preventDefault(); $('#lockBadge').hidden=true; $('#imgAdj').hidden=true; S.layers.forEach(removeLayerFromMap); S.layers=[]; S.comments=[]; renderComments(); closePopup(); setMode(null); S.map=null; history.replaceState(null,'','?'); $('#drawTools').hidden=true; renderMapsList(); if(window.innerWidth<=760) $('#panel').classList.add('open'); };
 
 async function boot(){
   if(EMBED) $('#app').classList.add('embed');
